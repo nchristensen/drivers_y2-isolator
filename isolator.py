@@ -38,7 +38,7 @@ import math
 
 from meshmode.array_context import (
     PyOpenCLArrayContext,
-    PytatoPyOpenCLArrayContext
+    SingleGridWorkBalancingPytatoArrayContext as PytatoPyOpenCLArrayContext
 )
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
@@ -245,6 +245,14 @@ def main(ctx_factory=cl.create_some_context, rst_filename=None, use_profiling=Fa
         queue,
         allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
+    # default i/o junk frequencies
+    nviz = 500
+    nhealth = 1
+    nrestart = 5000
+    nstatus = 25
+
+    # default timestepping control
+    integrator = "rk4"
     current_dt = 1e-8
     t_final = 1e-7
     current_t = 0
@@ -252,13 +260,16 @@ def main(ctx_factory=cl.create_some_context, rst_filename=None, use_profiling=Fa
     current_cfl = 1.0
     constant_cfl = False
 
-    # no internal euler status messages
-    nviz = 500
-    nhealth = 1
-    nrestart = 5000
-    nstatus = 25
+    # default health status bounds
+    health_pres_min = 1.0e-1
+    health_pres_max = 2.0e6
 
+    # discretization and model control
     order = 3
+    #alpha_sc = 0.5
+    #s0_sc = -5.0
+    #kappa_sc = 0.5
+
     so = np.log10(1.0e-4 / np.power(order, 4))
     # This uses proportionality constant of 3.0e-1 and taking 0p5x as the base grid h
     epsilon = (
@@ -267,49 +278,84 @@ def main(ctx_factory=cl.create_some_context, rst_filename=None, use_profiling=Fa
     print(so, epsilon, flush=True)
 
     # {{{ Initialize simple transport model
-    kappa = 1.0e-5
-    sigma = 1.0e-5
+    mu = 1.0e-5
+    kappa = 1.225*mu/0.75
     transport_model = SimpleTransport(viscosity=sigma, thermal_conductivity=kappa)
     # }}}
-    # working gas: CO2 #
-    #   gamma = 1.289
-    #   MW=44.009  g/mol
+    # working gas: O2/N2 #
+    #   O2 mass fraction 0.273
+    #   gamma = 1.4
     #   cp = 37.135 J/mol-K,
     #   rho= 1.977 kg/m^3 @298K
-    gamma_co2 = 1.289
-    r_co2 = 8314.59 / 44.009
+    gamma = 1.4
+    mw_o2 = 15.999*2
+    mw_n2 = 14.0067*2
+    mf_o2 = 0.273
+    mw = mw_o2*mf_o2 + mw_n2*(1.0 - mf_o2)
+    r = 8314.59/mw
 
     # background
-    #   100 Pa
-    #   298 K
-    #   rho = 1.77619667e-3 kg/m^3
-    #   velocity = 0,0,0
-    rho_bkrnd = 1.0e-1  # 1.77619667e-1
-    pres_bkrnd = 5000  # 10000
+    #rho_bkrnd = 1.0e-1  # 1.77619667e-1
+    pres_bkrnd = 5000
+    temp_bkrnd = 298
+    rho_bkrnd = pres_bkrnd/r/temp_bkrnd
 
     # nozzle inflow #
     #
-    # stagnation tempertuare 298 K
-    # stagnation pressure 1.5e Pa
+    # stagnation tempertuare 2076.43 K
+    # stagnation pressure 2.745e5 Pa
     #
-    # isentropic expansion based on the area ratios between the inlet (r=13e-3m) and
-    # the throat (r=6.3e-3)
+    # isentropic expansion based on the area ratios between the inlet (r=54e-3m) and
+    # the throat (r=3.167e-3)
     #
-    #  MJA, this is calculated offline, add some code to do it for us
-    #
-    #   Mach number=0.139145
-    #   pressure=148142
-    #   temperature=297.169
-    #   density=2.63872
-    #   gamma=1.289
     dim = 2
     vel_inflow = np.zeros(shape=(dim,))
-    orig = np.zeros(shape=(dim,))
-    orig[0] = 0.83
-    pres_inflow = 148142
-    rho_inflow = 2.63872
-    mach_inflow = 0.139145
-    vel_inflow[0] = mach_inflow * math.sqrt(gamma_co2 * pres_inflow / rho_inflow)
+    total_pres_inflow = 2.745e5
+    total_temp_inflow = 2076.43
+
+    throat_height = 3.167e-3
+    inlet_height = 54.0e-3
+    inlet_area_ratio = inlet_height/throat_height
+
+    def getMachFromAreaRatio(area_ratio, gamma, mach_guess=0.01):
+        error = 1.0e-8
+        nextError = 1.0e8
+        g = gamma
+        M0 = mach_guess
+        while nextError > error:
+            R = (((2/(g + 1) + ((g - 1)/(g + 1)*M0*M0))**(((g + 1)/(2*g - 2))))/M0
+                - area_ratio)
+            dRdM = (2*((2/(g + 1) + ((g - 1)/(g + 1)*M0*M0))**(((g + 1)/(2*g - 2))))
+                   / (2*g - 2)*(g - 1)/(2/(g + 1) + ((g - 1)/(g + 1)*M0*M0)) -
+                   ((2/(g + 1) + ((g - 1)/(g + 1)*M0*M0))**(((g + 1)/(2*g - 2))))
+                   * M0**(-2))
+            M1 = M0 - R/dRdM
+            nextError = abs(R)
+            M0 = M1
+
+        return M1
+
+    def getIsentropicPressure(mach, P0, gamma):
+        pressure = (1. + (gamma - 1.)*0.5*math.pow(mach, 2))
+        pressure = P0*math.pow(pressure, (-gamma / (gamma - 1.)))
+        return pressure
+
+    def getIsentropicTemperature(mach, T0, gamma):
+        temperature = (1. + (gamma - 1.)*0.5*math.pow(mach, 2))
+        temperature = T0*math.pow(temperature, -1.0)
+        return temperature
+
+    inlet_mach = getMachFromAreaRatio(area_ratio=inlet_area_ratio,
+                                      gamma=gamma,
+                                      mach_guess=0.01)
+    pres_inflow = getIsentropicPressure(mach=inlet_mach,
+                                        P0=total_pres_inflow,
+                                        gamma=gamma)
+    temp_inflow = getIsentropicTemperature(mach=inlet_mach,
+                                           T0=total_temp_inflow,
+                                           gamma=gamma)
+    rho_inflow = pres_inflow/temp_inflow/r
+    vel_inflow[0] = inlet_mach*math.sqrt(gamma*pres_inflow/rho_inflow)
 
     from mirgecom.integrators import euler_step
     timestepper = euler_step
