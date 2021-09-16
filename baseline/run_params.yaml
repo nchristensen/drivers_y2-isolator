@@ -1,0 +1,11 @@
+nviz: 1
+nrestart: 10
+nhealth: 1
+nstatus: 1
+current_dt: 5.0e-10
+t_final: 5.e-9
+#t_final: 5.0e-10
+order:  1
+integrator: euler
+health_pres_min: 10
+health_pres_max: 2.e6

@@ -85,6 +85,7 @@ from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
     PrescribedInviscidBoundary,
     IsothermalNoSlipBoundary,
+    AdiabaticNoslipMovingBoundary,
     DummyBoundary
 )
 from mirgecom.initializers import (Uniform, PlanarDiscontinuity)
@@ -158,6 +159,121 @@ def getMachFromAreaRatio(area_ratio, gamma, mach_guess=0.01):
 
     return M1
 
+class InitACTII:
+    r"""Solution initializer for flow in the ACT-II facility
+
+    This initializer creates a physics-consistent flow solution
+    given the top and bottom geometry profiles and an EOS using isentropic
+    flow relations.
+
+    The flow is initialized from the inlet stagnations pressure, P0, and 
+    stagnation temperature T0.
+
+    The geometry is specied as an array of points in the following format
+
+    (x_loc, top_y_coord, bottom_y_coord)
+
+    geometry locations are linearly interpolated between given data points
+
+    .. automethod:: __init__
+    .. automethod:: __call__
+    """
+
+    def __init__(
+            self, *, dim=2, nspecies=0, geometry,
+            P0, T0
+    ):
+        r"""Initialize mixture parameters.
+
+        Parameters
+        ----------
+        dim: int
+            specifies the number of dimensions for the solution
+        P0: float
+            stagnation pressure
+        T0: float
+            stagnation temperature
+        geometry: numpy.ndarray
+            list of coordinates for the top and bottom walls
+        """
+
+        self._dim = dim
+        self._P0 = P0
+        self._T0 = T0
+        self._geometry = geometry
+
+    def __call__(self, x_vec, eos, *, time=0.0):
+        """Create the solution state at locations *x_vec*.
+
+        Parameters
+        ----------
+        x_vec: numpy.ndarray
+            Coordinates at which solution is desired
+        eos:
+            Mixture-compatible equation-of-state object must provide
+            these functions:
+            `eos.get_density`
+            `eos.get_internal_energy`
+        time: float
+            Time at which solution is desired. The location is (optionally)
+            dependent on time
+        """
+        if x_vec.shape != (self._dim,):
+            raise ValueError(f"Position vector has unexpected dimensionality,"
+                             f" expected {self._dim}.")
+
+        xpos = x_vec[0]
+        actx = x.array_context
+
+        npts = geometry.size()
+        if xpos <= geometry[0][0]:
+            topYFromX = geometry[0][1]
+            bottomYFromX = geometry[0][2]
+        elif xpos >= geometry[npts-1][0]:
+            topYFromX = geometry[npts-1][1]
+            bottomYFromX = geometry[npts-1][2]
+        else:
+            leftx = self._geometry[0][0]
+            leftytop = self._geometry[0][1]
+            leftybottom = self._geometry[0][2]
+            for data in range(self._geometry[:,]):
+                if xpos < xcoord:
+                    rightx = data[0]
+                    rightytop = data[1]
+                    rightx = data[2]
+                else:
+                    leftx = data[0]
+                    leftytop = data[1]
+                    leftybottom = data[2]
+
+        #xtanh = 1.0/self._sigma*(x0 - x)
+        #weight = 0.5*(1.0 - actx.np.tanh(xtanh))
+        #pressure = self._pl + (self._pr - self._pl)*weight
+        #temperature = self._tl + (self._tr - self._tl)*weight
+        #velocity = self._ul + (self._ur - self._ul)*weight
+        #y = self._yl + (self._yr - self._yl)*weight
+#
+        #if self._nspecies:
+            #mass = eos.get_density(pressure, temperature,
+                                   #species_mass_fractions=y)
+        #else:
+            #mass = pressure/temperature/eos.gas_const()
+
+        #specmass = mass * y
+        #mom = mass * velocity
+        #if self._nspecies:
+            #internal_energy = \
+                #eos.get_internal_energy(temperature,
+                                        #species_mass_fractions=y)
+        #else:
+            #internal_energy = pressure/mass/(eos.gamma() - 1)
+#
+        #kinetic_energy = 0.5 * np.dot(velocity, velocity)
+        #energy = mass * (internal_energy + kinetic_energy)
+
+        #return make_conserved(dim=self._dim, mass=mass, energy=energy,
+                              #momentum=mom, species_mass=specmass)
+
 class IsentropicInflow:
     def __init__(self, *, dim=1, direc=0, T0=298, P0=1e5, mach=0.01, p_fun=None):
 
@@ -198,7 +314,7 @@ class IsentropicInflow:
 
         mass = 0.0*x_vec[0] + rho
         mom = velocity*mass
-        energy = (pressure/(gamma - 1.0)) + actx.np.dot(mom, mom)/(2.0*mass)
+        energy = (pressure/(gamma - 1.0)) + np.dot(mom, mom)/(2.0*mass)
         return make_conserved(
             dim=self._dim,
             mass=mass,
@@ -385,12 +501,18 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     inlet_area_ratio = inlet_height/throat_height
     outlet_area_ratio = inlet_height/throat_height
 
+    # ramp the stagnation pressure
+    start_ramp_pres = 10000
+    end_ramp_pres = total_pres_inflow
+    ramp_interval = 5.0e-4
+    t_ramp_start = 1.0e-6
 
     inlet_mach = getMachFromAreaRatio(area_ratio=inlet_area_ratio,
                                       gamma=gamma,
                                       mach_guess=0.01)
     pres_inflow = getIsentropicPressure(mach=inlet_mach,
-                                        P0=total_pres_inflow,
+                                        #P0=total_pres_inflow,
+                                        P0=start_ramp_pres,
                                         gamma=gamma)
     temp_inflow = getIsentropicTemperature(mach=inlet_mach,
                                            T0=total_temp_inflow,
@@ -405,14 +527,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         #print(f"final inlet pressure {pres_inflow_final}")
 
     outlet_mach = getMachFromAreaRatio(area_ratio=outlet_area_ratio,
-                                      gamma=gamma,
-                                      mach_guess=1.1)
+                                       gamma=gamma,
+                                       mach_guess=1.1)
     pres_outflow = getIsentropicPressure(mach=outlet_mach,
-                                        P0=total_pres_inflow,
-                                        gamma=gamma)
+                                         P0=total_pres_inflow,
+                                         gamma=gamma)
     temp_outflow = getIsentropicTemperature(mach=outlet_mach,
-                                           T0=total_temp_inflow,
-                                           gamma=gamma)
+                                            T0=total_temp_inflow,
+                                            gamma=gamma)
     rho_outflow = pres_inflow/temp_inflow/r
     vel_outflow[0] = inlet_mach*math.sqrt(gamma*pres_outflow/rho_outflow)
 
@@ -425,22 +547,45 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     eos = IdealSingleGas(
         gamma=gamma, gas_const=r, transport_model=transport_model
     )
-    #bulk_init = Discontinuity(dim=dim, x0=0.235, sigma=0.004, rhol=rho_inflow,
-                              #rhor=rho_bkrnd, pl=pres_inflow, pr=pres_bkrnd,
-                              #ul=vel_inflow[0], ur=300.0)
+#    bulk_init = Discontinuity(dim=dim, x0=0.235, sigma=0.004, rhol=rho_inflow,
+#                              rhor=rho_bkrnd, pl=pres_inflow, pr=pres_bkrnd,
+#                              ul=vel_inflow[0], ur=300.0)
 
-    bulk_init = PlanarDiscontinuity(dim=dim, disc_location=0.235, sigma=0.004,
+    bulk_init = PlanarDiscontinuity(dim=dim, disc_location=0.226, sigma=0.002,
         temperature_left=temp_inflow, temperature_right=temp_bkrnd,
         pressure_left=pres_inflow, pressure_right=pres_bkrnd,
         velocity_left=vel_inflow, velocity_right=vel_bkrnd)
 
+    # pressure ramp function
+    def inflow_ramp_pressure(
+        t,
+        startP=start_ramp_pres,
+        finalP=end_ramp_pres,
+        ramp_interval=ramp_interval,
+        t_ramp_start=t_ramp_start
+    ):
+        return actx.np.where(
+            actx.np.greater(t, t_ramp_start),
+            actx.np.minimum(
+                finalP,
+                startP + (t - t_ramp_start)/ramp_interval*(finalP - startP)),
+            startP)
+
     inflow_init = IsentropicInflow(
         dim=dim,
         T0=total_temp_inflow,
-        P0=total_pres_inflow,
-        mach=inlet_mach
+#        P0=total_pres_inflow,
+        P0=start_ramp_pres,
+        mach=inlet_mach,
+        p_fun=inflow_ramp_pressure
     )
     outflow_init = Uniform(
+        dim=dim,
+        rho=rho_bkrnd,
+        p=pres_bkrnd,
+        velocity=vel_bkrnd
+    )
+    outflow_fully_developed = Uniform(
         dim=dim,
         rho=rho_outflow,
         p=pres_outflow,
@@ -450,6 +595,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     inflow = PrescribedInviscidBoundary(fluid_solution_func=inflow_init)
     outflow = PrescribedInviscidBoundary(fluid_solution_func=outflow_init)
     wall = IsothermalNoSlipBoundary()
+    #wall = AdiabaticNoslipMovingBoundary()
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
@@ -489,40 +635,22 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     if rank == 0:
         logging.info("Done Making discretization")
 
-
-    #from pytools.obj_array import make_obj_array
-
-    #wtf is this doing? zero out the cavity?
-    #mom_init = make_obj_array([zeros + 513 * 0.15, zeros])
-    #state_init = make_conserved(dim, mass=0.15+zeros, energy=315000.0+zeros,
-                                #momentum=mom_init)
-
-    #sponge_sigma = (
-        #1.0e-2 / current_dt * 0.5 * (1.0 + actx.np.tanh((nodes[0] - 0.95) / 0.02))
-    #)
-    #ref_state = bulk_init(x_vec=nodes, eos=eos, time=0.0)
-
     # initialize the sponge field
-    #MJA comment out temporarily
-    print("getting nodes?")
-    #nodes = thaw(actx, discr.nodes())
     nodes = thaw(discr.nodes(), actx)
-    print("done getting nodes?")
-    #zeros = discr.zeros(actx)
-    #def gen_sponge():
-        #thickness = 0.15
-        #amplitude = 1.0/current_dt/25.0
-        #x0 = 0.05
-#
-        #return amplitude * actx.np.where(
-            #actx.np.greater(nodes[0], x0),
-            #zeros + ((nodes[0] - x0) / thickness) * ((nodes[0] - x0) / thickness),
-            #zeros + 0.0,
-        #)
-#
-    ##zeros = 0*nodes[0]
-    #sponge_sigma = gen_sponge()
-    #ref_state = outflow_init(x_vec=nodes, eos=eos, time=0.0)
+    zeros = discr.zeros(actx)
+    def gen_sponge():
+        thickness = 0.09
+        amplitude = 1.0/current_dt/1000
+        x0 = 0.90
+
+        return amplitude * actx.np.where(
+            actx.np.greater(nodes[0], x0),
+            zeros + ((nodes[0] - x0) / thickness) * ((nodes[0] - x0) / thickness),
+            zeros + 0.0,
+        )
+
+    sponge_sigma = gen_sponge()
+    ref_state = outflow_init(x_vec=nodes, eos=eos, time=0.0)
 
     vis_timer = None
     log_cfl = LogUserQuantity(name="cfl", value=current_cfl)
@@ -608,7 +736,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
                                                 kappa=kappa_sc)
         viz_fields = [("cv", state),
                       ("dv", dv),
-                      #("sponge_sigma", gen_sponge()),
+                      ("sponge_sigma", gen_sponge()),
                       ("tagged_cells", tagged_cells),
                       ("dt" if constant_cfl else "cfl", ts_field)]
         write_visfile(discr, viz_fields, visualizer, vizname=vizname,
@@ -721,7 +849,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
                 dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
                                    boundary_kwargs={"time": t, "eos": eos},
                                    alpha=alpha_sc, s0=s0_sc, kappa=kappa_sc)
-            ) #+ sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
+            ) + sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
         )
 
     current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,
