@@ -43,7 +43,8 @@ from meshmode.array_context import (
     #PytatoPyOpenCLArrayContext
 )
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
-#from meshmode.dof_array import thaw
+from meshmode.dof_array import thaw
+from meshmode.dof_array import flatten_to_numpy
 from arraycontext import thaw
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
@@ -132,13 +133,15 @@ def sponge(cv, cv_ref, sigma):
     return (sigma*(cv_ref - cv))
 
 def getIsentropicPressure(mach, P0, gamma):
-    pressure = (1. + (gamma - 1.)*0.5*math.pow(mach, 2))
-    pressure = P0*math.pow(pressure, (-gamma / (gamma - 1.)))
+    #pressure = (1. + (gamma - 1.)*0.5*math.pow(mach, 2))
+    #pressure = P0*math.pow(pressure, (-gamma / (gamma - 1.)))
+    pressure = (1. + (gamma - 1.)*0.5*mach**2)
+    pressure = P0*pressure**(-gamma / (gamma - 1.))
     return pressure
 
 def getIsentropicTemperature(mach, T0, gamma):
-    temperature = (1. + (gamma - 1.)*0.5*math.pow(mach, 2))
-    temperature = T0*math.pow(temperature, -1.0)
+    temperature = (1. + (gamma - 1.)*0.5*mach**2)
+    temperature = T0/temperature
     return temperature
 
 def getMachFromAreaRatio(area_ratio, gamma, mach_guess=0.01):
@@ -159,6 +162,38 @@ def getMachFromAreaRatio(area_ratio, gamma, mach_guess=0.01):
 
     return M1
 
+def get_y_from_x(x, data):
+    """
+    Return the linearly interpolated the value of y
+    from the value in data(x,y) at x
+    """
+
+    if x <= data[0][0]:
+        y = data[0][1]
+    elif x >= data[-1][0]:
+        y = data[-1][1]
+    else:
+        ileft = 0
+        iright = data[0].size-1
+
+        # find the bracketing points, simple subdivision search
+        while iright - ileft > 1:
+            ind = int((iright - ileft)/2)
+            if x < data[ind][0]:
+                iright = ind
+            else:
+                ileft = ind
+
+        leftx = data[ileft][0]
+        rightx = data[iright][0]
+        lefty = data[ileft][1]
+        righty = data[iright][1]
+
+        dx = rightx - leftx
+        dy = righty - lefty
+        y = lefty + (x - leftx)*dy/dx
+    return y
+
 class InitACTII:
     r"""Solution initializer for flow in the ACT-II facility
 
@@ -166,12 +201,8 @@ class InitACTII:
     given the top and bottom geometry profiles and an EOS using isentropic
     flow relations.
 
-    The flow is initialized from the inlet stagnations pressure, P0, and 
+    The flow is initialized from the inlet stagnations pressure, P0, and
     stagnation temperature T0.
-
-    The geometry is specied as an array of points in the following format
-
-    (x_loc, top_y_coord, bottom_y_coord)
 
     geometry locations are linearly interpolated between given data points
 
@@ -180,7 +211,7 @@ class InitACTII:
     """
 
     def __init__(
-            self, *, dim=2, nspecies=0, geometry,
+            self, *, dim=2, nspecies=0, geom_top, geom_bottom,
             P0, T0
     ):
         r"""Initialize mixture parameters.
@@ -193,16 +224,21 @@ class InitACTII:
             stagnation pressure
         T0: float
             stagnation temperature
-        geometry: numpy.ndarray
-            list of coordinates for the top and bottom walls
+        geom-top: numpy.ndarray
+            coordinates for the top wall
+        geom-bottom: numpy.ndarray
+            coordinates for the bottom wall
         """
 
         self._dim = dim
         self._P0 = P0
         self._T0 = T0
-        self._geometry = geometry
+        self._geom_top = geom_top
+        self._geom_bottom = geom_bottom
+        self._throat_height = 3.167e-3
+        self._x_throat = 0.283718298
 
-    def __call__(self, x_vec, eos, *, time=0.0):
+    def __call__(self, discr, x_vec, eos, *, time=0.0):
         """Create the solution state at locations *x_vec*.
 
         Parameters
@@ -222,57 +258,80 @@ class InitACTII:
             raise ValueError(f"Position vector has unexpected dimensionality,"
                              f" expected {self._dim}.")
 
+        #print(f" x_vec.shape {x_vec.shape}")
+        #print(f" x_vec.size {x_vec.size}")
+        #print(x_vec)
         xpos = x_vec[0]
-        actx = x.array_context
+        #print(f" xpos.shape {xpos.shape}")
+        #print(f" xpos.size {xpos.size}")
+        #print(f" xpos[0].size {xpos[0].size}")
+        #print(f" xpos[0][0].size {xpos[0][0].size}")
+        #print(xpos)
+        ytop = 0*x_vec[0]
+        actx = xpos.array_context
 
-        npts = geometry.size()
-        if xpos <= geometry[0][0]:
-            topYFromX = geometry[0][1]
-            bottomYFromX = geometry[0][2]
-        elif xpos >= geometry[npts-1][0]:
-            topYFromX = geometry[npts-1][1]
-            bottomYFromX = geometry[npts-1][2]
-        else:
-            leftx = self._geometry[0][0]
-            leftytop = self._geometry[0][1]
-            leftybottom = self._geometry[0][2]
-            for data in range(self._geometry[:,]):
-                if xpos < xcoord:
-                    rightx = data[0]
-                    rightytop = data[1]
-                    rightx = data[2]
-                else:
-                    leftx = data[0]
-                    leftytop = data[1]
-                    leftybottom = data[2]
+        #print(self._geom_top.shape)
+        #print(self._geom_top)
 
-        #xtanh = 1.0/self._sigma*(x0 - x)
-        #weight = 0.5*(1.0 - actx.np.tanh(xtanh))
-        #pressure = self._pl + (self._pr - self._pl)*weight
-        #temperature = self._tl + (self._tr - self._tl)*weight
-        #velocity = self._ul + (self._ur - self._ul)*weight
-        #y = self._yl + (self._yr - self._yl)*weight
-#
-        #if self._nspecies:
-            #mass = eos.get_density(pressure, temperature,
-                                   #species_mass_fractions=y)
-        #else:
-            #mass = pressure/temperature/eos.gas_const()
+        npts = self._geom_top.shape[0]
+        nnodes = xpos.size
 
-        #specmass = mass * y
-        #mom = mass * velocity
-        #if self._nspecies:
-            #internal_energy = \
-                #eos.get_internal_energy(temperature,
-                                        #species_mass_fractions=y)
-        #else:
-            #internal_energy = pressure/mass/(eos.gamma() - 1)
-#
-        #kinetic_energy = 0.5 * np.dot(velocity, velocity)
-        #energy = mass * (internal_energy + kinetic_energy)
+        from meshmode.dof_array import flatten_to_numpy
+        xpos_flat = flatten_to_numpy(actx, xpos)
+        #print(f" xpos_flat.shape {xpos_flat.shape}")
+        #print(f" xpos_flat.size {xpos_flat.size}")
+        gamma = eos.gamma()
+        gas_const = eos.gas_const()
 
-        #return make_conserved(dim=self._dim, mass=mass, energy=energy,
-                              #momentum=mom, species_mass=specmass)
+        ytop_flat = 0*xpos_flat
+        ybottom_flat = 0*xpos_flat
+        mach_flat = 0*xpos_flat
+        for inode in range(xpos_flat.size):
+            ytop_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_top)
+            ybottom_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_bottom)
+            #print(f"i {inode} x {xpos_flat[inode]} ytop {ytop_flat[inode]}")
+
+            area_ratio = (ytop_flat[inode] - ybottom_flat[inode])/self._throat_height
+            if xpos_flat[inode] < self._x_throat:
+                mach_guess = 0.01
+            else:
+                mach_guess = 1.1
+            mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=mach_guess)
+
+        from meshmode.dof_array import unflatten_from_numpy
+        ytop = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ytop_flat)
+        ybottom = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ybottom_flat)
+        mach = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), mach_flat)
+
+        #print(f" ytop.shape {ytop.shape}")
+        #print(f" ytop.size {ytop.size}")
+        #print(f" ytop[0].size {ytop[0].size}")
+        #print(f" ytop[0][0].size {ytop[0][0].size}")
+
+        pressure = getIsentropicPressure(
+            mach=mach,
+            P0=self._P0,
+            gamma=gamma
+        )
+        temperature = getIsentropicTemperature(
+            mach=mach,
+            T0=self._T0,
+            gamma=gamma
+        )
+
+        mass = pressure/temperature/gas_const
+        velocity = np.zeros(self._dim, dtype=object)
+        velocity[0] = mach*actx.np.sqrt(gamma*pressure/mass)
+
+        mom = velocity*mass
+        energy = (pressure/(gamma - 1.0)) + np.dot(mom, mom)/(2.0*mass)
+        return make_conserved(
+            dim=self._dim,
+            mass=mass,
+            momentum=mom,
+            energy=energy
+        )
+
 
 class IsentropicInflow:
     def __init__(self, *, dim=1, direc=0, T0=298, P0=1e5, mach=0.01, p_fun=None):
@@ -547,14 +606,27 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     eos = IdealSingleGas(
         gamma=gamma, gas_const=r, transport_model=transport_model
     )
+
+    # read geometry files
+    geometry_bottom = None
+    geometry_top = None
+    if rank == 0:
+        from numpy import loadtxt
+        geometry_bottom = loadtxt("nozzleBottom.dat", comments="#", unpack=False)
+        geometry_top = loadtxt("nozzleTop.dat", comments="#", unpack=False)
+    geometry_bottom = comm.bcast(geometry_bottom, root=0)
+    geometry_top = comm.bcast(geometry_top, root=0)
+
+    bulk_init = InitACTII(geom_top=geometry_top, geom_bottom=geometry_bottom,
+                           P0=total_pres_inflow, T0=total_temp_inflow)
 #    bulk_init = Discontinuity(dim=dim, x0=0.235, sigma=0.004, rhol=rho_inflow,
 #                              rhor=rho_bkrnd, pl=pres_inflow, pr=pres_bkrnd,
 #                              ul=vel_inflow[0], ur=300.0)
 
-    bulk_init = PlanarDiscontinuity(dim=dim, disc_location=0.226, sigma=0.002,
-        temperature_left=temp_inflow, temperature_right=temp_bkrnd,
-        pressure_left=pres_inflow, pressure_right=pres_bkrnd,
-        velocity_left=vel_inflow, velocity_right=vel_bkrnd)
+    #bulk_init = PlanarDiscontinuity(dim=dim, disc_location=0.226, sigma=0.002,
+        #temperature_left=temp_inflow, temperature_right=temp_bkrnd,
+        #pressure_left=pres_inflow, pressure_right=pres_bkrnd,
+        #velocity_left=vel_inflow, velocity_right=vel_bkrnd)
 
     # pressure ramp function
     def inflow_ramp_pressure(
@@ -713,7 +785,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         # Set the current state from time 0
         if rank == 0:
             logging.info("Initializing soln.")
-        current_state = bulk_init(x_vec=nodes, eos=eos, time=0)
+        current_state = bulk_init(discr=discr, x_vec=nodes, eos=eos, time=0)
 
     visualizer = make_visualizer(discr)
 
