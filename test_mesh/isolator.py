@@ -65,6 +65,7 @@ from mirgecom.logging_quantities import (
 )
 
 from mirgecom.navierstokes import ns_operator
+from mirgecom.euler import euler_operator
 from mirgecom.artificial_viscosity import av_operator, smoothness_indicator
 from mirgecom.simutil import (
     check_step,
@@ -895,9 +896,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     #inflow = PrescribedViscousBoundary()
     #outflow = PrescribedViscousBoundary(q_func=outflow_init)
     #outflow = PrescribedViscousBoundary()
-    wall = IsothermalNoSlipBoundary()
+    #wall = IsothermalNoSlipBoundary()
     #wall = AdiabaticNoslipMovingBoundary()
-    #wall = DummyBoundary()
+    wall = DummyBoundary()
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
@@ -1156,13 +1157,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
     def my_rhs(t, state):
         return (
-            ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
+            euler_operator(discr, cv=state, time=t, boundaries=boundaries, eos=eos)
+            #ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
             #+ make_conserved(
                 #dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
                                    #boundary_kwargs={"time": t, "eos": eos},
                                    #alpha=alpha_sc, s0=s0_sc, kappa=kappa_sc)
             #)
-            + sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
+            #+ sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
         )
 
     current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,

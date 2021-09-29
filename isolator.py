@@ -103,7 +103,8 @@ class MyRuntimeError(RuntimeError):
     pass
 
 
-def get_mesh(read_mesh=False):
+def get_mesh(read_mesh=True):
+#def get_mesh():
     """Get the mesh."""
     if read_mesh:
         from meshmode.mesh.io import read_gmsh
@@ -699,15 +700,15 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         timestepper = lsrk144_step
 
     # {{{ Initialize simple transport model
-    mu = 0.
-    #mu = 1.0e-5
+    #mu = 0.
+    mu = 1.0e-5
     #mu = 1.0e-4
     #mu = 1.0e-3
     #mu = .01
     #mu = .1
-    #kappa = 1.225*mu/0.75
+    kappa = 1.225*mu/0.75
     #kappa = 1.e-9
-    kappa = 0.
+    #kappa = 0.
     transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa)
     # }}}
     # working gas: O2/N2 #
@@ -915,7 +916,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
         assert restart_data["nparts"] == nparts
     else:  # generate the grid from scratch
-        local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh())
+        #local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh())
+        local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh)
         local_nelements = local_mesh.nelements
 
     if rank == 0:
@@ -1147,11 +1149,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     def my_rhs(t, state):
         return (
             ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
-            #+ make_conserved(
-                #dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
-                                   #boundary_kwargs={"time": t, "eos": eos},
-                                   #alpha=alpha_sc, s0=s0_sc, kappa=kappa_sc)
-            #)
+            + make_conserved(
+                dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
+                                   boundary_kwargs={"time": t, "eos": eos},
+                                   alpha=alpha_sc, s0=s0_sc, kappa=kappa_sc)
+            )
             + sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
         )
 
