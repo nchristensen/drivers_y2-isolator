@@ -2,10 +2,15 @@ nviz: 1
 nrestart: 10
 nhealth: 1
 nstatus: 1
-current_dt: 5.0e-10
-t_final: 5.e-9
+current_dt: 1.0e-9
+t_final: 1.e-7
 #t_final: 5.0e-10
 order:  1
+alpha_sc: 0.
+#alpha_sc: 0.3
+#alpha_sc: 10
+kappa_sc: 5.0
+s0_sc: -5.0
 integrator: euler
 health_pres_min: 10
 health_pres_max: 2.e6

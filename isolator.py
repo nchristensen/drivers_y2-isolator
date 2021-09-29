@@ -35,6 +35,7 @@ import pyopencl as cl
 import numpy.linalg as la  # noqa
 import pyopencl.array as cla  # noqa
 import math
+from functools import partial
 
 
 from meshmode.array_context import (
@@ -66,7 +67,6 @@ from mirgecom.logging_quantities import (
 from mirgecom.navierstokes import ns_operator
 from mirgecom.artificial_viscosity import av_operator, smoothness_indicator
 from mirgecom.simutil import (
-    get_sim_timestep,
     check_step,
     generate_and_distribute_mesh,
     write_visfile,
@@ -85,6 +85,7 @@ from mirgecom.fluid import make_conserved
 from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
     PrescribedInviscidBoundary,
+    PrescribedViscousBoundary,
     IsothermalNoSlipBoundary,
     AdiabaticNoslipMovingBoundary,
     DummyBoundary
@@ -102,11 +103,33 @@ class MyRuntimeError(RuntimeError):
     pass
 
 
-def get_mesh():
+def get_mesh(read_mesh=False):
     """Get the mesh."""
-    from meshmode.mesh.io import read_gmsh
-    mesh_filename = "data/isolator.msh"
-    mesh = read_gmsh(mesh_filename, force_ambient_dim=2)
+    if read_mesh:
+        from meshmode.mesh.io import read_gmsh
+        mesh_filename = "data/isolator.msh"
+        mesh = read_gmsh(mesh_filename, force_ambient_dim=2)
+    else:
+        left_boundary_loc = 0.2
+        right_boundary_loc = 0.4
+        bottom_boundary_loc = 0.0
+        top_boundary_loc = 0.05
+        char_len_x = 0.002
+        char_len_y = 0.001
+        box_ll = (left_boundary_loc, bottom_boundary_loc)
+        box_ur = (right_boundary_loc, top_boundary_loc)
+        num_elements = (int((box_ur[0]-box_ll[0])/char_len_x),
+                            int((box_ur[1]-box_ll[1])/char_len_y))
+
+        from meshmode.mesh.generation import generate_regular_rect_mesh
+        mesh = partial(generate_regular_rect_mesh, a=box_ll, b=box_ur, n=num_elements,
+          boundary_tag_to_face={
+              "inflow":["-x"],
+              "outflow":["+x"],
+              "wall":["+y","-y"]
+              }
+        )
+
     return mesh
 
 
@@ -174,11 +197,12 @@ def get_y_from_x(x, data):
         y = data[-1][1]
     else:
         ileft = 0
-        iright = data[0].size-1
+        iright = data.shape[0]-1
 
         # find the bracketing points, simple subdivision search
         while iright - ileft > 1:
-            ind = int((iright - ileft)/2)
+            ind = int(ileft+(iright - ileft)/2)
+            #print(f"ind {ind} x {x} x[ind] {data[ind][0]} ileft {ileft} iright {iright}")
             if x < data[ind][0]:
                 iright = ind
             else:
@@ -188,6 +212,8 @@ def get_y_from_x(x, data):
         rightx = data[iright][0]
         lefty = data[ileft][1]
         righty = data[iright][1]
+
+        #print(f"ileft {ileft} iright {iright}")
 
         dx = rightx - leftx
         dy = righty - lefty
@@ -230,12 +256,17 @@ class InitACTII:
             coordinates for the bottom wall
         """
 
+        # check number of points in the geometry
+        #top_size = geom_top.size
+        #bottom_size = geom_bottom.size
+
         self._dim = dim
         self._P0 = P0
         self._T0 = T0
         self._geom_top = geom_top
         self._geom_bottom = geom_bottom
-        self._throat_height = 3.167e-3
+        # TODO, calculate these from the geometry files
+        self._throat_height = 3.61909e-3
         self._x_throat = 0.283718298
 
     def __call__(self, discr, x_vec, eos, *, time=0.0):
@@ -258,55 +289,44 @@ class InitACTII:
             raise ValueError(f"Position vector has unexpected dimensionality,"
                              f" expected {self._dim}.")
 
-        #print(f" x_vec.shape {x_vec.shape}")
-        #print(f" x_vec.size {x_vec.size}")
-        #print(x_vec)
         xpos = x_vec[0]
-        #print(f" xpos.shape {xpos.shape}")
-        #print(f" xpos.size {xpos.size}")
-        #print(f" xpos[0].size {xpos[0].size}")
-        #print(f" xpos[0][0].size {xpos[0][0].size}")
-        #print(xpos)
+        ypos = x_vec[1]
         ytop = 0*x_vec[0]
         actx = xpos.array_context
 
-        #print(self._geom_top.shape)
-        #print(self._geom_top)
-
-        npts = self._geom_top.shape[0]
-        nnodes = xpos.size
-
         from meshmode.dof_array import flatten_to_numpy
         xpos_flat = flatten_to_numpy(actx, xpos)
-        #print(f" xpos_flat.shape {xpos_flat.shape}")
-        #print(f" xpos_flat.size {xpos_flat.size}")
         gamma = eos.gamma()
         gas_const = eos.gas_const()
 
         ytop_flat = 0*xpos_flat
         ybottom_flat = 0*xpos_flat
         mach_flat = 0*xpos_flat
+        throat_height = 1
         for inode in range(xpos_flat.size):
             ytop_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_top)
             ybottom_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_bottom)
-            #print(f"i {inode} x {xpos_flat[inode]} ytop {ytop_flat[inode]}")
+            if ytop_flat[inode] - ybottom_flat[inode] < throat_height:
+                throat_height = ytop_flat[inode] -ybottom_flat[inode]
+                throat_loc = xpos_flat[inode]
 
-            area_ratio = (ytop_flat[inode] - ybottom_flat[inode])/self._throat_height
-            if xpos_flat[inode] < self._x_throat:
-                mach_guess = 0.01
+        #print(f"throat height {throat_height}")
+        for inode in range(xpos_flat.size):
+            area_ratio = (ytop_flat[inode] - ybottom_flat[inode])/throat_height
+            if xpos_flat[inode] < throat_loc:
+                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=0.01)
+            elif xpos_flat[inode] >throat_loc:
+                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=1.01)
             else:
-                mach_guess = 1.1
-            mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=mach_guess)
+                mach_flat[inode] = 1.0
+
+        ind = 0
+        #print(f"ind {ind} xpos[ind] {xpos[ind]} mach_flat[ind] {mach_flat[ind]}")
 
         from meshmode.dof_array import unflatten_from_numpy
         ytop = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ytop_flat)
         ybottom = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ybottom_flat)
         mach = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), mach_flat)
-
-        #print(f" ytop.shape {ytop.shape}")
-        #print(f" ytop.size {ytop.size}")
-        #print(f" ytop[0].size {ytop[0].size}")
-        #print(f" ytop[0][0].size {ytop[0][0].size}")
 
         pressure = getIsentropicPressure(
             mach=mach,
@@ -319,9 +339,37 @@ class InitACTII:
             gamma=gamma
         )
 
+        #print(f"ind {ind} pressure[ind] {pressure[ind]} temperature[ind] {temperature[ind]}")
+
+        #print(f"gas_const {gas_const}")
         mass = pressure/temperature/gas_const
+
+        #print(f"pressure {pressure} temperature {temperature} density {mass}")
+
         velocity = np.zeros(self._dim, dtype=object)
         velocity[0] = mach*actx.np.sqrt(gamma*pressure/mass)
+
+        # modify the velocity in the near-wall region to have a tanh profile
+        # this approximates the BL velocity profile
+        sigma = 1000
+        smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
+        smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
+        velocity[0] = velocity[0]*smoothing_top*smoothing_bottom
+
+        # zero out the velocity in the cavity region, we let the flow develop here naturally
+        # initially in pressure/temperature equilibrium with the exterior flow
+        zeros = 0*xpos
+        #xc_left = zeros + 0.65163 
+        xc_left = zeros + 0.65163 - 0.000001
+        xc_right = zeros + 0.72163 + 0.000001
+        yc_top = zeros - 0.0083245
+        yc_bottom = zeros - 0.03
+
+        left_edge = actx.np.greater(xpos, xc_left)
+        right_edge = actx.np.less(xpos, xc_right)
+        top_edge = actx.np.less(ypos, yc_top)
+        inside_cavity = left_edge*right_edge*top_edge
+        velocity[0] = actx.np.where(inside_cavity, zeros, velocity[0])
 
         mom = velocity*mass
         energy = (pressure/(gamma - 1.0)) + np.dot(mom, mom)/(2.0*mass)
@@ -381,6 +429,128 @@ class IsentropicInflow:
             energy=energy
         )
 
+
+from pytools.obj_array import make_obj_array
+class UniformModified:
+    r"""Solution initializer for a uniform flow with boundary layer smoothing.
+
+    Similar to the Uniform initializer, except the velocity profile is modified
+    so that the velocity goes to zero at y(min, max)
+
+    The smoothing comes from a hyperbolic tangent with weight sigma
+
+    .. automethod:: __init__
+    .. automethod:: __call__
+    """
+
+    def __init__(
+            self, *, dim=1, nspecies=0, pressure=1.0, temperature=2.5,
+            velocity=None, mass_fracs=None,
+            sigma=0., ymin=0., ymax=1.0
+    ):
+        r"""Initialize uniform flow parameters.
+
+        Parameters
+        ----------
+        dim: int
+            specify the number of dimensions for the flow
+        nspecies: int
+            specify the number of species in the flow
+        temperature: float
+            specifies the temperature
+        pressure: float
+            specifies the pressure
+        velocity: numpy.ndarray
+            specifies the flow velocity
+        sigma: float
+            specifies the sigma used in the tanh function for smoothing
+        ymin: flaot
+            minimum y-coordinate for smoothing
+        ymax: float
+            maximum y-coordinate for smoothing
+        """
+        if velocity is not None:
+            numvel = len(velocity)
+            myvel = velocity
+            if numvel > dim:
+                dim = numvel
+            elif numvel < dim:
+                myvel = np.zeros(shape=(dim,))
+                for i in range(numvel):
+                    myvel[i] = velocity[i]
+            self._velocity = myvel
+        else:
+            self._velocity = np.zeros(shape=(dim,))
+
+        if mass_fracs is not None:
+            self._nspecies = len(mass_fracs)
+            self._mass_fracs = mass_fracs
+        else:
+            self._nspecies = nspecies
+            self._mass_fracs = np.zeros(shape=(nspecies,))
+
+        if self._velocity.shape != (dim,):
+            raise ValueError(f"Expected {dim}-dimensional inputs.")
+
+        self._pressure = pressure
+        self._temperature = temperature
+        self._dim = dim
+        self._sigma = sigma
+        self._ymin = ymin
+        self._ymax = ymax
+
+    def __call__(self, x_vec, *, eos, **kwargs):
+        """
+        Create a uniform flow solution at locations *x_vec*.
+
+        Parameters
+        ----------
+        x_vec: numpy.ndarray
+            Nodal coordinates
+        eos: :class:`mirgecom.eos.IdealSingleGas`
+            Equation of state class with method to supply gas *gamma*.
+        """
+
+        ones = (1.0 + x_vec[0]) - x_vec[0]
+        pressure = self._pressure * ones
+        temperature = self._temperature * ones
+        velocity = make_obj_array([self._velocity[i] * ones
+                                   for i in range(self._dim)])
+        y = make_obj_array([self._mass_fracs[i] * ones
+                            for i in range(self._nspecies)])
+        if self._nspecies:
+            mass = eos.get_density(pressure, temperature, y)
+        else:
+            mass = pressure/temperature/eos.gas_const()
+        specmass = mass * y
+
+        #print(f"mass {mass}")
+        #print(f"pressure {pressure}")
+        #print(f"temperature {temperature}")
+        #print(f"eos.gas_const {eos.gas_const()}")
+
+        # modify the velocity profile from uniform
+        ypos = x_vec[1]
+        actx = ypos.array_context
+        ymax = 0.0*x_vec[1] + self._ymax
+        ymin = 0.0*x_vec[1] + self._ymin
+        smoothing_max = actx.np.tanh(self._sigma*(actx.np.abs(ypos-ymax)))
+        smoothing_min = actx.np.tanh(self._sigma*(actx.np.abs(ypos-ymin)))
+        velocity[0] = velocity[0]*smoothing_max*smoothing_min
+
+        mom = mass*velocity
+        if self._nspecies:
+            internal_energy = eos.get_internal_energy(temperature=temperature,
+                                                      species_mass=specmass)
+        else:
+            internal_energy = pressure/(eos.gamma() - 1)
+        kinetic_energy = 0.5 * np.dot(mom, mom)/mass
+        energy = internal_energy + kinetic_energy
+
+        return make_conserved(dim=self._dim, mass=mass, energy=energy,
+                              momentum=mom, species_mass=specmass)
+
+
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profiling=False,
          use_logmgr=False, user_input_file=None, actx_class=PyOpenCLArrayContext,
@@ -431,9 +601,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
     # discretization and model control
     order = 1
-    #alpha_sc = 0.5
-    #s0_sc = -5.0
-    kappa_sc = 1.e-5
+    alpha_sc = 0.3
+    s0_sc = -5.0
+    kappa_sc = 0.5
 
 
     if user_input_file:
@@ -467,6 +637,18 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         except KeyError:
             pass
         try:
+            alpha_sc = float(input_data["alpha_sc"])
+        except KeyError:
+            pass
+        try:
+            kappa_sc = float(input_data["kappa_sc"])
+        except KeyError:
+            pass
+        try:
+            s0_sc = float(input_data["s0_sc"])
+        except KeyError:
+            pass
+        try:
             order = int(input_data["order"])
         except KeyError:
             pass
@@ -491,7 +673,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
     s0_sc = np.log10(1.0e-4 / np.power(order, 4))
     # This uses proportionality constant of 3.0e-1 and taking 0p5x as the base grid h
-    alpha_sc = (3.0e-1*(1.0)/order)
+    alpha_sc = (alpha_sc*(1.0)/order)
     if rank == 0:
         print(f"\tShock capturing parameters: alpha {alpha_sc}, "
               f"s0 {s0_sc}, kappa {kappa_sc}")
@@ -517,8 +699,15 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         timestepper = lsrk144_step
 
     # {{{ Initialize simple transport model
-    mu = 1.0e-5
-    kappa = 1.225*mu/0.75
+    mu = 0.
+    #mu = 1.0e-5
+    #mu = 1.0e-4
+    #mu = 1.0e-3
+    #mu = .01
+    #mu = .1
+    #kappa = 1.225*mu/0.75
+    #kappa = 1.e-9
+    kappa = 0.
     transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa)
     # }}}
     # working gas: O2/N2 #
@@ -535,9 +724,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
     # background
     #rho_bkrnd = 1.0e-1  # 1.77619667e-1
-    pres_bkrnd = 5000
-    temp_bkrnd = 298
-    rho_bkrnd = pres_bkrnd/r/temp_bkrnd
+    #pres_bkrnd = 5000
+    #temp_bkrnd = 298
+    #rho_bkrnd = pres_bkrnd/r/temp_bkrnd
 
     # nozzle inflow #
     #
@@ -554,24 +743,25 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     total_pres_inflow = 2.745e5
     total_temp_inflow = 2076.43
 
-    throat_height = 3.167e-3
-    inlet_height = 54.0e-3
-    outlet_height = 28.56e-3
+    #throat_height = 3.167e-3
+    throat_height = 3.61909e-3
+    inlet_height = 54.129e-3
+    outlet_height = 28.54986e-3
     inlet_area_ratio = inlet_height/throat_height
-    outlet_area_ratio = inlet_height/throat_height
+    outlet_area_ratio = outlet_height/throat_height
 
-    # ramp the stagnation pressure
-    start_ramp_pres = 10000
-    end_ramp_pres = total_pres_inflow
-    ramp_interval = 5.0e-4
-    t_ramp_start = 1.0e-6
+    ## ramp the stagnation pressure
+    #start_ramp_pres = 10000
+    #end_ramp_pres = total_pres_inflow
+    #ramp_interval = 5.0e-4
+    #t_ramp_start = 1.0e-6
 
     inlet_mach = getMachFromAreaRatio(area_ratio=inlet_area_ratio,
                                       gamma=gamma,
                                       mach_guess=0.01)
     pres_inflow = getIsentropicPressure(mach=inlet_mach,
-                                        #P0=total_pres_inflow,
-                                        P0=start_ramp_pres,
+                                        P0=total_pres_inflow,
+                                        #P0=start_ramp_pres,
                                         gamma=gamma)
     temp_inflow = getIsentropicTemperature(mach=inlet_mach,
                                            T0=total_temp_inflow,
@@ -583,6 +773,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         print(f"inlet Mach number {inlet_mach}")
         print(f"inlet temperature {temp_inflow}")
         print(f"inlet pressure {pres_inflow}")
+        print(f"inlet rho {rho_inflow}")
+        print(f"inlet velocity {vel_inflow[0]}")
         #print(f"final inlet pressure {pres_inflow_final}")
 
     outlet_mach = getMachFromAreaRatio(area_ratio=outlet_area_ratio,
@@ -594,13 +786,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     temp_outflow = getIsentropicTemperature(mach=outlet_mach,
                                             T0=total_temp_inflow,
                                             gamma=gamma)
-    rho_outflow = pres_inflow/temp_inflow/r
-    vel_outflow[0] = inlet_mach*math.sqrt(gamma*pres_outflow/rho_outflow)
+    rho_outflow = pres_outflow/temp_outflow/r
+    vel_outflow[0] = outlet_mach*math.sqrt(gamma*pres_outflow/rho_outflow)
 
     if rank == 0:
         print(f"outlet Mach number {outlet_mach}")
         print(f"outlet temperature {temp_outflow}")
         print(f"outlet pressure {pres_outflow}")
+        print(f"outlet rho {rho_outflow}")
         print(f"outlet velocity {vel_outflow[0]}")
 
     eos = IdealSingleGas(
@@ -628,46 +821,73 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         #pressure_left=pres_inflow, pressure_right=pres_bkrnd,
         #velocity_left=vel_inflow, velocity_right=vel_bkrnd)
 
-    # pressure ramp function
-    def inflow_ramp_pressure(
-        t,
-        startP=start_ramp_pres,
-        finalP=end_ramp_pres,
-        ramp_interval=ramp_interval,
-        t_ramp_start=t_ramp_start
-    ):
-        return actx.np.where(
-            actx.np.greater(t, t_ramp_start),
-            actx.np.minimum(
-                finalP,
-                startP + (t - t_ramp_start)/ramp_interval*(finalP - startP)),
-            startP)
+    ## pressure ramp function
+    #def inflow_ramp_pressure(
+        #t,
+        #startP=start_ramp_pres,
+        #finalP=end_ramp_pres,
+        #ramp_interval=ramp_interval,
+        #t_ramp_start=t_ramp_start
+    #):
+        #return actx.np.where(
+            #actx.np.greater(t, t_ramp_start),
+            #actx.np.minimum(
+                #finalP,
+                #startP + (t - t_ramp_start)/ramp_interval*(finalP - startP)),
+            #startP)
 
-    inflow_init = IsentropicInflow(
+    #inflow_init = IsentropicInflow(
+        #dim=dim,
+        #T0=total_temp_inflow,
+##        P0=total_pres_inflow,
+        #P0=start_ramp_pres,
+        #mach=inlet_mach,
+        #p_fun=inflow_ramp_pressure
+    #)
+    #outflow_init = Uniform(
+        #dim=dim,
+        #rho=rho_bkrnd,
+        #p=pres_bkrnd,
+        #velocity=vel_bkrnd
+    #)
+    #outflow_fully_developed = Uniform(
+        #dim=dim,
+        #rho=rho_outflow,
+        #p=pres_outflow,
+        #velocity=vel_outflow
+    #)
+
+    inflow_init = UniformModified(
         dim=dim,
-        T0=total_temp_inflow,
-#        P0=total_pres_inflow,
-        P0=start_ramp_pres,
-        mach=inlet_mach,
-        p_fun=inflow_ramp_pressure
+        temperature=temp_inflow,
+        pressure=pres_inflow,
+        velocity=vel_inflow,
+        sigma=1000,
+        #sigma=100,
+        ymin=-0.0270645,
+        ymax=0.0270645
     )
-    outflow_init = Uniform(
+
+    outflow_init = UniformModified(
         dim=dim,
-        rho=rho_bkrnd,
-        p=pres_bkrnd,
-        velocity=vel_bkrnd
-    )
-    outflow_fully_developed = Uniform(
-        dim=dim,
-        rho=rho_outflow,
-        p=pres_outflow,
-        velocity=vel_outflow
+        temperature=temp_outflow,
+        pressure=pres_outflow,
+        velocity=vel_outflow,
+        sigma=1000,
+        #sigma=100,
+        ymin=-0.016874377,
+        ymax=0.011675488
     )
 
     inflow = PrescribedInviscidBoundary(fluid_solution_func=inflow_init)
     outflow = PrescribedInviscidBoundary(fluid_solution_func=outflow_init)
+    #inflow = PrescribedViscousBoundary(q_func=inflow_init)
+    #inflow = PrescribedViscousBoundary()
+    #outflow = PrescribedViscousBoundary(q_func=outflow_init)
+    #outflow = PrescribedViscousBoundary()
     wall = IsothermalNoSlipBoundary()
     #wall = AdiabaticNoslipMovingBoundary()
+    #wall = DummyBoundary()
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
@@ -695,7 +915,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
         assert restart_data["nparts"] == nparts
     else:  # generate the grid from scratch
-        local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh)
+        local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh())
         local_nelements = local_mesh.nelements
 
     if rank == 0:
@@ -713,6 +933,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     def gen_sponge():
         thickness = 0.09
         amplitude = 1.0/current_dt/1000
+        #amplitude = 0.
         x0 = 0.90
 
         return amplitude * actx.np.where(
@@ -722,7 +943,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         )
 
     sponge_sigma = gen_sponge()
-    ref_state = outflow_init(x_vec=nodes, eos=eos, time=0.0)
+    #ref_state = outflow_init(x_vec=nodes, eos=eos, time=0.0)
+    ref_state = bulk_init(discr=discr, x_vec=nodes, eos=eos, time=0)
 
     vis_timer = None
     log_cfl = LogUserQuantity(name="cfl", value=current_cfl)
@@ -786,6 +1008,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         if rank == 0:
             logging.info("Initializing soln.")
         current_state = bulk_init(discr=discr, x_vec=nodes, eos=eos, time=0)
+        #current_state = inflow_init(discr=discr, x_vec=nodes, eos=eos, time=0)
 
     visualizer = make_visualizer(discr)
 
@@ -806,8 +1029,15 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         if tagged_cells is None:
             tagged_cells = smoothness_indicator(discr, state.mass, s0=s0_sc,
                                                 kappa=kappa_sc)
+
+        #c = actx.np.sqrt(eos.gamma*dv.pressure/state.mass)
+        #c = eos.sound_speed(state)
+        #mach = vmag/c
+        mach = actx.np.sqrt(np.dot(state.velocity, state.velocity))/eos.sound_speed(state)
         viz_fields = [("cv", state),
                       ("dv", dv),
+                      ("mach", mach),
+                      ("velocity", state.velocity),
                       ("sponge_sigma", gen_sponge()),
                       ("tagged_cells", tagged_cells),
                       ("dt" if constant_cfl else "cfl", ts_field)]
@@ -917,11 +1147,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     def my_rhs(t, state):
         return (
             ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
-            + make_conserved(
-                dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
-                                   boundary_kwargs={"time": t, "eos": eos},
-                                   alpha=alpha_sc, s0=s0_sc, kappa=kappa_sc)
-            ) + sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
+            #+ make_conserved(
+                #dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
+                                   #boundary_kwargs={"time": t, "eos": eos},
+                                   #alpha=alpha_sc, s0=s0_sc, kappa=kappa_sc)
+            #)
+            + sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
         )
 
     current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,

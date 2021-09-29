@@ -447,16 +447,17 @@ Point(423) = {0.38328,-0.0083245,0.0,basesize};
 
 //Make Lines
 //Top
-BSpline(1000) = {1:212};
+BSpline(1000) = {1:212};  // goes clockwise
 
 //Bottom Lines
-BSpline(1001) = {213:423};
+BSpline(1001) = {213:423}; // goes counter-clockwise
 
 //Mid-point on inlet
-Point(457) = {0.21, (0.0270645-0.0270645)/2.,0.0,2*basesize};
+Point(460) = {0.21, (0.0270645-0.0270645)/2.,0.0,2*basesize};
 //Inlet
-Line(458) = {1,457};
-Line(459) = {457,213};
+Line(423) = {1,213};  //goes counter-clockwise
+//Line(458) = {1,460};
+//Line(459) = {460,213};
 
 //Cavity Start
 Point(450) = {0.65163,-0.0083245,0.0,basesize};
@@ -485,32 +486,82 @@ Line(455) = {454,455};
 //Outlet
 Line(456) = {455,456};
 //Top wall
-Line(457) = {212,456};
+//Line(457) = {212,456};  // goes clockwise
+Line(457) = {456,212};  // goes counter-clockwise
 
 
 //Create lineloop of this geometry
-//don't ask how I did this...
-Line Loop(1) = {
-//1:211,
-1000,
--1001,
--458,
--459,
--450,
--451,
--452,
--453,
--454,
--455,
--456,
-457
+// start on the bottom left and go around counter clockwise
+//Curve Loop(1) = {
+//1001,
+//450,
+//451,
+//452,
+//453,
+//454,
+//455,
+//456,
+//457,
+//-1000,
+//423
+//};
+
+//Create lineloop of this geometry
+// start on the bottom left and go around clockwise
+Curve Loop(1) = {
+-423, // inlet
+1000, // top wall
+-457, // extension to end
+-456, // outlet
+-455, // bottom expansion
+-454, // post-cavity flat
+-453, // cavity rear (slant)
+-452, // cavity bottom
+-451, // cavity front
+-450, // isolator to cavity
+-1001 // bottom wall
 };
+
+////Create lineloop of this geometry
+//// start on the bottom left and go around clockwise
+//Curve Loop(1) = {
+//-1001,
+//-450,
+//-451,
+//-452,
+//-453,
+//-454,
+//-455,
+//-456,
+//-457,
+//1000,
+//-423
+//};
+
+// old from wyatt
+//Line Loop(1) = {
+////1:211,
+//1000,
+//-1001,
+//-423,
+////-458,
+////-459,
+//-450,
+//-451,
+//-452,
+//-453,
+//-454,
+//-455,
+//-456,
+//457
+//};
 
 Plane Surface(1) = {1};
 
 Physical Surface('domain') = {1};
 
-Physical Curve('inflow') = {423};
+Physical Curve('inflow') = {-423};
+//Physical Curve('inflow') = {458,459};
 Physical Curve('outflow') = {456};
 Physical Curve('wall') = {
 //1:211,
