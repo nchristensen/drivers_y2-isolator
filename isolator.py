@@ -44,9 +44,8 @@ from meshmode.array_context import (
     #PytatoPyOpenCLArrayContext
 )
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
-from meshmode.dof_array import thaw
 from meshmode.dof_array import flatten_to_numpy
-from arraycontext import thaw
+from arraycontext import thaw, freeze
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
 from grudge.shortcuts import make_visualizer
@@ -104,7 +103,6 @@ class MyRuntimeError(RuntimeError):
 
 
 def get_mesh(read_mesh=True):
-#def get_mesh():
     """Get the mesh."""
     if read_mesh:
         from meshmode.mesh.io import read_gmsh
@@ -133,32 +131,64 @@ def get_mesh(read_mesh=True):
 
     return mesh
 
-
-def mass_source(discr, q, r, eos, t, rate):
-    """Compute the mass source term."""
-    from pytools.obj_array import flat_obj_array
-    from mirgecom.initializers import _make_pulse
-
-    dim = discr.dim
-    zeros = 0 * r[0]
-    r0 = np.zeros(dim)
-    r0[0] = 0.68
-    r0[1] = -0.02
-    rho_addition = _make_pulse(rate, r0, 0.001, r)
-    gamma = 1.289
-    r_gas = 8314.59 / 44.009
-    temp_inflow = 297.169
-    e = temp_inflow * r_gas / (gamma - 1.0)
-    rhoe_addition = rho_addition * e
-    return flat_obj_array(rho_addition, rhoe_addition, zeros, zeros)
-
-
 def sponge(cv, cv_ref, sigma):
-    return (sigma*(cv_ref - cv))
+    return sigma*(cv_ref - cv)
+
+class InitSponge:
+    r"""Solution initializer for flow in the ACT-II facility
+
+    This initializer creates a physics-consistent flow solution
+    given the top and bottom geometry profiles and an EOS using isentropic
+    flow relations.
+
+    The flow is initialized from the inlet stagnations pressure, P0, and
+    stagnation temperature T0.
+
+    geometry locations are linearly interpolated between given data points
+
+    .. automethod:: __init__
+    .. automethod:: __call__
+    """
+    def __init__(self, *, x0, thickness, amplitude):
+        r"""Initialize the sponge parameters.
+
+        Parameters
+        ----------
+        x0: float
+            sponge starting x location
+        thickness: float
+            sponge extent
+        amplitude: float
+            sponge strength modifier
+        """
+
+        self._x0 = x0
+        self._thickness = thickness
+        self._amplitude = amplitude
+
+    def __call__(self, x_vec, *, time=0.0):
+        """Create the sponge intensity at locations *x_vec*.
+
+        Parameters
+        ----------
+        x_vec: numpy.ndarray
+            Coordinates at which solution is desired
+        time: float
+            Time at which solution is desired. The strength is (optionally)
+            dependent on time
+        """
+        xpos = x_vec[0]
+        actx = xpos.array_context
+        zeros = 0*xpos
+        x0 = zeros + self._x0
+
+        return self._amplitude * actx.np.where(
+            actx.np.greater(xpos, x0),
+            zeros + ((xpos - self._x0)/self._thickness)*((xpos - self._x0)/self._thickness),
+            zeros + 0.0
+        )
 
 def getIsentropicPressure(mach, P0, gamma):
-    #pressure = (1. + (gamma - 1.)*0.5*math.pow(mach, 2))
-    #pressure = P0*math.pow(pressure, (-gamma / (gamma - 1.)))
     pressure = (1. + (gamma - 1.)*0.5*mach**2)
     pressure = P0*pressure**(-gamma / (gamma - 1.))
     return pressure
@@ -203,7 +233,6 @@ def get_y_from_x(x, data):
         # find the bracketing points, simple subdivision search
         while iright - ileft > 1:
             ind = int(ileft+(iright - ileft)/2)
-            #print(f"ind {ind} x {x} x[ind] {data[ind][0]} ileft {ileft} iright {iright}")
             if x < data[ind][0]:
                 iright = ind
             else:
@@ -213,8 +242,6 @@ def get_y_from_x(x, data):
         rightx = data[iright][0]
         lefty = data[ileft][1]
         righty = data[iright][1]
-
-        #print(f"ileft {ileft} iright {iright}")
 
         dx = rightx - leftx
         dy = righty - lefty
@@ -322,7 +349,6 @@ class InitACTII:
                 mach_flat[inode] = 1.0
 
         ind = 0
-        #print(f"ind {ind} xpos[ind] {xpos[ind]} mach_flat[ind] {mach_flat[ind]}")
 
         from meshmode.dof_array import unflatten_from_numpy
         ytop = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ytop_flat)
@@ -340,13 +366,7 @@ class InitACTII:
             gamma=gamma
         )
 
-        #print(f"ind {ind} pressure[ind] {pressure[ind]} temperature[ind] {temperature[ind]}")
-
-        #print(f"gas_const {gas_const}")
         mass = pressure/temperature/gas_const
-
-        #print(f"pressure {pressure} temperature {temperature} density {mass}")
-
         velocity = np.zeros(self._dim, dtype=object)
         velocity[0] = mach*actx.np.sqrt(gamma*pressure/mass)
 
@@ -372,55 +392,6 @@ class InitACTII:
         inside_cavity = left_edge*right_edge*top_edge
         velocity[0] = actx.np.where(inside_cavity, zeros, velocity[0])
 
-        mom = velocity*mass
-        energy = (pressure/(gamma - 1.0)) + np.dot(mom, mom)/(2.0*mass)
-        return make_conserved(
-            dim=self._dim,
-            mass=mass,
-            momentum=mom,
-            energy=energy
-        )
-
-
-class IsentropicInflow:
-    def __init__(self, *, dim=1, direc=0, T0=298, P0=1e5, mach=0.01, p_fun=None):
-
-        self._P0 = P0
-        self._T0 = T0
-        self._dim = dim
-        self._direc = direc
-        self._mach = mach
-        #if p_fun is not None:
-            #self._p_fun = p_fun
-        self._p_fun = p_fun
-
-    def __call__(self, x_vec, *, time=0, eos, **kwargs):
-
-        if self._p_fun is not None:
-            P0 = self._p_fun(time)
-        else:
-            P0 = self._P0
-        T0 = self._T0
-
-        gamma = eos.gamma()
-        gas_const = eos.gas_const()
-        pressure = getIsentropicPressure(
-            mach=self._mach,
-            P0=P0,
-            gamma=gamma
-        )
-        temperature = getIsentropicTemperature(
-            mach=self._mach,
-            T0=T0,
-            gamma=gamma
-        )
-        rho = pressure/temperature/gas_const
-
-        velocity = np.zeros(self._dim, dtype=object)
-        actx = x_vec[0].array_context
-        velocity[self._direc] = self._mach*actx.np.sqrt(gamma*pressure/rho)
-
-        mass = 0.0*x_vec[0] + rho
         mom = velocity*mass
         energy = (pressure/(gamma - 1.0)) + np.dot(mom, mom)/(2.0*mass)
         return make_conserved(
@@ -525,11 +496,6 @@ class UniformModified:
             mass = pressure/temperature/eos.gas_const()
         specmass = mass * y
 
-        #print(f"mass {mass}")
-        #print(f"pressure {pressure}")
-        #print(f"temperature {temperature}")
-        #print(f"eos.gas_const {eos.gas_const()}")
-
         # modify the velocity profile from uniform
         ypos = x_vec[1]
         actx = ypos.array_context
@@ -577,9 +543,13 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     else:
         queue = cl.CommandQueue(cl_ctx)
 
+    # main array context for the simulation
     actx = actx_class(
         queue,
         allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+
+    # an array context for things that just can't lazy
+    init_actx = PyOpenCLArrayContext(queue, allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
     # default i/o junk frequencies
     nviz = 500
@@ -723,12 +693,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     mw = mw_o2*mf_o2 + mw_n2*(1.0 - mf_o2)
     r = 8314.59/mw
 
-    # background
-    #rho_bkrnd = 1.0e-1  # 1.77619667e-1
-    #pres_bkrnd = 5000
-    #temp_bkrnd = 298
-    #rho_bkrnd = pres_bkrnd/r/temp_bkrnd
-
+    #
     # nozzle inflow #
     #
     # stagnation tempertuare 2076.43 K
@@ -744,25 +709,17 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     total_pres_inflow = 2.745e5
     total_temp_inflow = 2076.43
 
-    #throat_height = 3.167e-3
     throat_height = 3.61909e-3
     inlet_height = 54.129e-3
     outlet_height = 28.54986e-3
     inlet_area_ratio = inlet_height/throat_height
     outlet_area_ratio = outlet_height/throat_height
 
-    ## ramp the stagnation pressure
-    #start_ramp_pres = 10000
-    #end_ramp_pres = total_pres_inflow
-    #ramp_interval = 5.0e-4
-    #t_ramp_start = 1.0e-6
-
     inlet_mach = getMachFromAreaRatio(area_ratio=inlet_area_ratio,
                                       gamma=gamma,
                                       mach_guess=0.01)
     pres_inflow = getIsentropicPressure(mach=inlet_mach,
                                         P0=total_pres_inflow,
-                                        #P0=start_ramp_pres,
                                         gamma=gamma)
     temp_inflow = getIsentropicTemperature(mach=inlet_mach,
                                            T0=total_temp_inflow,
@@ -813,50 +770,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
     bulk_init = InitACTII(geom_top=geometry_top, geom_bottom=geometry_bottom,
                            P0=total_pres_inflow, T0=total_temp_inflow)
-#    bulk_init = Discontinuity(dim=dim, x0=0.235, sigma=0.004, rhol=rho_inflow,
-#                              rhor=rho_bkrnd, pl=pres_inflow, pr=pres_bkrnd,
-#                              ul=vel_inflow[0], ur=300.0)
-
-    #bulk_init = PlanarDiscontinuity(dim=dim, disc_location=0.226, sigma=0.002,
-        #temperature_left=temp_inflow, temperature_right=temp_bkrnd,
-        #pressure_left=pres_inflow, pressure_right=pres_bkrnd,
-        #velocity_left=vel_inflow, velocity_right=vel_bkrnd)
-
-    ## pressure ramp function
-    #def inflow_ramp_pressure(
-        #t,
-        #startP=start_ramp_pres,
-        #finalP=end_ramp_pres,
-        #ramp_interval=ramp_interval,
-        #t_ramp_start=t_ramp_start
-    #):
-        #return actx.np.where(
-            #actx.np.greater(t, t_ramp_start),
-            #actx.np.minimum(
-                #finalP,
-                #startP + (t - t_ramp_start)/ramp_interval*(finalP - startP)),
-            #startP)
-
-    #inflow_init = IsentropicInflow(
-        #dim=dim,
-        #T0=total_temp_inflow,
-##        P0=total_pres_inflow,
-        #P0=start_ramp_pres,
-        #mach=inlet_mach,
-        #p_fun=inflow_ramp_pressure
-    #)
-    #outflow_init = Uniform(
-        #dim=dim,
-        #rho=rho_bkrnd,
-        #p=pres_bkrnd,
-        #velocity=vel_bkrnd
-    #)
-    #outflow_fully_developed = Uniform(
-        #dim=dim,
-        #rho=rho_outflow,
-        #p=pres_outflow,
-        #velocity=vel_outflow
-    #)
 
     inflow_init = UniformModified(
         dim=dim,
@@ -864,7 +777,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         pressure=pres_inflow,
         velocity=vel_inflow,
         sigma=1000,
-        #sigma=100,
         ymin=-0.0270645,
         ymax=0.0270645
     )
@@ -875,20 +787,17 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         pressure=pres_outflow,
         velocity=vel_outflow,
         sigma=1000,
-        #sigma=100,
         ymin=-0.016874377,
         ymax=0.011675488
     )
 
     inflow = PrescribedInviscidBoundary(fluid_solution_func=inflow_init)
     outflow = PrescribedInviscidBoundary(fluid_solution_func=outflow_init)
+    # Don't work with AV
     #inflow = PrescribedViscousBoundary(q_func=inflow_init)
-    #inflow = PrescribedViscousBoundary()
     #outflow = PrescribedViscousBoundary(q_func=outflow_init)
-    #outflow = PrescribedViscousBoundary()
     wall = IsothermalNoSlipBoundary()
     #wall = AdiabaticNoslipMovingBoundary()
-    #wall = DummyBoundary()
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
@@ -916,7 +825,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
         assert restart_data["nparts"] == nparts
     else:  # generate the grid from scratch
-        #local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh())
         local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh)
         local_nelements = local_mesh.nelements
 
@@ -930,23 +838,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         logging.info("Done Making discretization")
 
     # initialize the sponge field
-    nodes = thaw(discr.nodes(), actx)
-    zeros = discr.zeros(actx)
-    def gen_sponge():
-        thickness = 0.09
-        amplitude = 1.0/current_dt/1000
-        #amplitude = 0.
-        x0 = 0.90
+    sponge_thickness = 0.09
+    sponge_amp = 1.0/current_dt/1000
+    sponge_x0 = 0.9
 
-        return amplitude * actx.np.where(
-            actx.np.greater(nodes[0], x0),
-            zeros + ((nodes[0] - x0) / thickness) * ((nodes[0] - x0) / thickness),
-            zeros + 0.0,
-        )
-
-    sponge_sigma = gen_sponge()
-    #ref_state = outflow_init(x_vec=nodes, eos=eos, time=0.0)
-    ref_state = bulk_init(discr=discr, x_vec=nodes, eos=eos, time=0)
+    sponge_init = InitSponge(x0=sponge_x0, thickness=sponge_thickness, amplitude=sponge_amp)
+    sponge_sigma = sponge_init(x_vec=thaw(discr.nodes(), actx))
+    ref_state = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx), eos=eos, time=0)
+    ref_state = thaw(freeze(ref_state, init_actx), actx)
 
     vis_timer = None
     log_cfl = LogUserQuantity(name="cfl", value=current_cfl)
@@ -1009,8 +908,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         # Set the current state from time 0
         if rank == 0:
             logging.info("Initializing soln.")
-        current_state = bulk_init(discr=discr, x_vec=nodes, eos=eos, time=0)
-        #current_state = inflow_init(discr=discr, x_vec=nodes, eos=eos, time=0)
+        current_state = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx), eos=eos, time=0)
+        current_state = thaw(freeze(current_state, init_actx), actx)
 
     visualizer = make_visualizer(discr)
 
@@ -1032,15 +931,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
             tagged_cells = smoothness_indicator(discr, state.mass, s0=s0_sc,
                                                 kappa=kappa_sc)
 
-        #c = actx.np.sqrt(eos.gamma*dv.pressure/state.mass)
-        #c = eos.sound_speed(state)
-        #mach = vmag/c
         mach = actx.np.sqrt(np.dot(state.velocity, state.velocity))/eos.sound_speed(state)
         viz_fields = [("cv", state),
                       ("dv", dv),
                       ("mach", mach),
                       ("velocity", state.velocity),
-                      ("sponge_sigma", gen_sponge()),
+                      ("sponge_sigma", sponge_sigma),
                       ("tagged_cells", tagged_cells),
                       ("dt" if constant_cfl else "cfl", ts_field)]
         write_visfile(discr, viz_fields, visualizer, vizname=vizname,
@@ -1165,6 +1061,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
                       pre_step_callback=my_pre_step,
                       post_step_callback=my_post_step, dt=current_dt,
                       state=current_state, t=current_t, t_final=t_final)
+                      #state=thaw(current_state, actx), t=current_t, t_final=t_final)
 
     # Dump the final data
     if rank == 0:
