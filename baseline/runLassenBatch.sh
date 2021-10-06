@@ -1,9 +1,9 @@
 #! /bin/bash --login
 #BSUB -nnodes 1
 #BSUB -G uiuc
-#BSUB -W 60
-#BSUB -J iso_smoke
-#BSUB -q pdebug
+#BSUB -W 720
+#BSUB -J Y2_iso_2d
+#BSUB -q pbatch
 #BSUB -o runOutput.txt
 #BSUB -e runOutput.txt
 
