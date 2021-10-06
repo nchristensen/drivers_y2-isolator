@@ -661,3 +661,4 @@ Mesh.MeshSizeExtendFromBoundary = 0;
 Mesh.MeshSizeFromPoints = 0;
 Mesh.MeshSizeFromCurvature = 0;
 
+//Mesh.Smoothing = 3;
