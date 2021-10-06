@@ -104,17 +104,74 @@ class MyRuntimeError(RuntimeError):
     pass
 
 
-def get_mesh(read_mesh=False):
+def get_mesh(use_gmsh=True):
     """Get the mesh."""
-    if read_mesh:
-        from meshmode.mesh.io import read_gmsh
-        mesh_filename = "data/isolator.msh"
-        mesh = read_gmsh(mesh_filename, force_ambient_dim=2)
+    left_boundary_loc = 0.2
+    right_boundary_loc = 0.4
+    bottom_boundary_loc = 0.0
+    top_boundary_loc = 0.05
+    if use_gmsh:
+        from meshmode.mesh.io import (
+            generate_gmsh,
+            ScriptSource
+        )
+
+        # for 2D, the line segments/surfaces need to be specified clockwise to
+        # get the correct facing (right-handed) surface normals
+        my_string = (f"""
+                size=0.001;
+                Point(1) = {{ {left_boundary_loc},  {bottom_boundary_loc}, 0, size}};
+                Point(2) = {{ {right_boundary_loc}, {bottom_boundary_loc},  0, size}};
+                Point(3) = {{ {right_boundary_loc}, {top_boundary_loc},    0, size}};
+                Point(4) = {{ {left_boundary_loc},  {top_boundary_loc},    0, size}};
+                Line(1) = {{1, 2}};
+                Line(2) = {{2, 3}};
+                Line(3) = {{3, 4}};
+                Line(4) = {{4, 1}};
+                Line Loop(1) = {{-4, -3, -2, -1}};
+                Plane Surface(1) = {{1}};
+                Physical Surface('domain') = {{1}};
+                Physical Curve('inflow') = {{4}};
+                Physical Curve('outflow') = {{2}};
+                Physical Curve('wall') = {{1,3}};
+
+                // Create distance field from curves, excludes cavity
+                Field[1] = Distance;
+                Field[1].CurvesList = {{1,3}};
+                Field[1].NumPointsPerCurve = 100000;
+
+                //Create threshold field that varrries element size near boundaries
+                Field[2] = Threshold;
+                Field[2].InField = 1;
+                Field[2].SizeMin = size / 5;
+                Field[2].SizeMax = size;
+                Field[2].DistMin = 0.0002;
+                Field[2].DistMax = 0.005;
+                Field[2].StopAtDistMax = 1;
+
+                //  background mesh size
+                Field[3] = Box;
+                Field[3].XMin = 0.;
+                Field[3].XMax = 1.0;
+                Field[3].YMin = -1.0;
+                Field[3].YMax = 1.0;
+                Field[3].VIn = size;
+                Field[3].VOut = 2 * size;
+
+                // take the minimum of all defined meshing fields
+                Field[100] = Min;
+                Field[100].FieldsList = {{2, 3}};
+                Background Field = 100;
+
+                Mesh.MeshSizeExtendFromBoundary = 0;
+                Mesh.MeshSizeFromPoints = 0;
+                Mesh.MeshSizeFromCurvature = 0;
+        """)
+
+        #print(my_string)
+        mesh = partial(generate_gmsh, ScriptSource(my_string, "geo"),
+                                force_ambient_dim=2, dimensions=2, target_unit="M")
     else:
-        left_boundary_loc = 0.2
-        right_boundary_loc = 0.4
-        bottom_boundary_loc = 0.0
-        top_boundary_loc = 0.05
         char_len_x = 0.002
         char_len_y = 0.001
         box_ll = (left_boundary_loc, bottom_boundary_loc)
@@ -134,31 +191,10 @@ def get_mesh(read_mesh=False):
     return mesh
 
 
-def mass_source(discr, q, r, eos, t, rate):
-    """Compute the mass source term."""
-    from pytools.obj_array import flat_obj_array
-    from mirgecom.initializers import _make_pulse
-
-    dim = discr.dim
-    zeros = 0 * r[0]
-    r0 = np.zeros(dim)
-    r0[0] = 0.68
-    r0[1] = -0.02
-    rho_addition = _make_pulse(rate, r0, 0.001, r)
-    gamma = 1.289
-    r_gas = 8314.59 / 44.009
-    temp_inflow = 297.169
-    e = temp_inflow * r_gas / (gamma - 1.0)
-    rhoe_addition = rho_addition * e
-    return flat_obj_array(rho_addition, rhoe_addition, zeros, zeros)
-
-
 def sponge(cv, cv_ref, sigma):
     return (sigma*(cv_ref - cv))
 
 def getIsentropicPressure(mach, P0, gamma):
-    #pressure = (1. + (gamma - 1.)*0.5*math.pow(mach, 2))
-    #pressure = P0*math.pow(pressure, (-gamma / (gamma - 1.)))
     pressure = (1. + (gamma - 1.)*0.5*mach**2)
     pressure = P0*pressure**(-gamma / (gamma - 1.))
     return pressure
@@ -268,7 +304,8 @@ class InitACTII:
         self._geom_bottom = geom_bottom
         # TODO, calculate these from the geometry files
         self._throat_height = 3.61909e-3
-        self._x_throat = 0.283718298
+        #self._x_throat = 0.283718298
+        self._x_throat = -0.1  # set to be all supersonic
 
     def __call__(self, discr, x_vec, eos, *, time=0.0):
         """Create the solution state at locations *x_vec*.
@@ -312,11 +349,14 @@ class InitACTII:
                 throat_loc = xpos_flat[inode]
 
         #print(f"throat height {throat_height}")
+        # this is hard coded for testing here
+        throat_height = self._throat_height
+        throat_loc = -1.0
         for inode in range(xpos_flat.size):
             area_ratio = (ytop_flat[inode] - ybottom_flat[inode])/throat_height
             if xpos_flat[inode] < throat_loc:
                 mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=0.01)
-            elif xpos_flat[inode] >throat_loc:
+            elif xpos_flat[inode] > throat_loc:
                 mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=1.01)
             else:
                 mach_flat[inode] = 1.0
@@ -341,6 +381,13 @@ class InitACTII:
         )
 
         #print(f"ind {ind} pressure[ind] {pressure[ind]} temperature[ind] {temperature[ind]}")
+
+        # modify the temperature in the near wall region to match the isothermal boundaries
+        sigma_temperature = 2500
+        wall_temperature = 300
+        smoothing_top = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ytop)))
+        smoothing_bottom = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ybottom)))
+        temperature = wall_temperature + (temperature - wall_temperature)*smoothing_top*smoothing_bottom
 
         #print(f"gas_const {gas_const}")
         mass = pressure/temperature/gas_const
@@ -515,6 +562,19 @@ class UniformModified:
         ones = (1.0 + x_vec[0]) - x_vec[0]
         pressure = self._pressure * ones
         temperature = self._temperature * ones
+
+        ypos = x_vec[1]
+        actx = ypos.array_context
+        ymax = 0.0*x_vec[1] + self._ymax
+        ymin = 0.0*x_vec[1] + self._ymin
+
+        # modify the temperature in the near wall region to match the isothermal boundaries
+        sigma_temperature = 2500
+        wall_temperature = 300
+        smoothing_min = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ymin)))
+        smoothing_max = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ymax)))
+        temperature = wall_temperature + (temperature - wall_temperature)*smoothing_min*smoothing_max
+
         velocity = make_obj_array([self._velocity[i] * ones
                                    for i in range(self._dim)])
         y = make_obj_array([self._mass_fracs[i] * ones
@@ -531,10 +591,6 @@ class UniformModified:
         #print(f"eos.gas_const {eos.gas_const()}")
 
         # modify the velocity profile from uniform
-        ypos = x_vec[1]
-        actx = ypos.array_context
-        ymax = 0.0*x_vec[1] + self._ymax
-        ymin = 0.0*x_vec[1] + self._ymin
         smoothing_max = actx.np.tanh(self._sigma*(actx.np.abs(ypos-ymax)))
         smoothing_min = actx.np.tanh(self._sigma*(actx.np.abs(ypos-ymin)))
         velocity[0] = velocity[0]*smoothing_max*smoothing_min
@@ -700,13 +756,13 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         timestepper = lsrk144_step
 
     # {{{ Initialize simple transport model
-    mu = 0.
-    #mu = 1.0e-5
+    #mu = 0.
+    mu = 1.0e-5
     #mu = 1.0e-4
     #mu = 1.0e-3
     #mu = .01
     #mu = .1
-    #kappa = 1.225*mu/0.75
+    kappa = 1.225*mu/0.75
     #kappa = 1.e-9
     kappa = 0.
     transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa)
@@ -760,6 +816,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     inlet_height = geometry_top[0][1] - geometry_bottom[0][1]
     #outlet_height = 28.54986e-3
     outlet_height = geometry_top[-1][1] - geometry_bottom[-1][1]
+
     inlet_area_ratio = inlet_height/throat_height
     outlet_area_ratio = outlet_height/throat_height
 
@@ -821,7 +878,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 #    bulk_init = Discontinuity(dim=dim, x0=0.235, sigma=0.004, rhol=rho_inflow,
 #                              rhor=rho_bkrnd, pl=pres_inflow, pr=pres_bkrnd,
 #                              ul=vel_inflow[0], ur=300.0)
-    bulk_init = Uniform(dim=dim)
+    #bulk_init = Uniform(dim=dim)
 
     #bulk_init = PlanarDiscontinuity(dim=dim, disc_location=0.226, sigma=0.002,
         #temperature_left=temp_inflow, temperature_right=temp_bkrnd,
@@ -871,8 +928,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         velocity=vel_inflow,
         sigma=1000,
         #sigma=100,
-        ymin=-0.0270645,
-        ymax=0.0270645
+        ymin=0.0,
+        ymax=0.05
     )
 
     outflow_init = UniformModified(
@@ -882,23 +939,24 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         velocity=vel_outflow,
         sigma=1000,
         #sigma=100,
-        ymin=-0.016874377,
-        ymax=0.011675488
+        ymin=0,
+        ymax=0.05
     )
 
-    inflow_init=Uniform(dim=dim)
-    outflow_init=Uniform(dim=dim)
+    #inflow_init=Uniform(dim=dim)
+    #outflow_init=Uniform(dim=dim)
 
-    inflow = PrescribedInviscidBoundary(fluid_solution_func=inflow_init)
-    #outflow = PrescribedInviscidBoundary(fluid_solution_func=outflow_init)
-    outflow = PrescribedInviscidBoundary(fluid_solution_func=inflow_init)
+    #inflow = PrescribedInviscidBoundary(fluid_solution_func=inflow_init)
+    inflow = PrescribedInviscidBoundary(fluid_solution_func=outflow_init)
+    outflow = PrescribedInviscidBoundary(fluid_solution_func=outflow_init)
+    #outflow = PrescribedInviscidBoundary(fluid_solution_func=inflow_init)
     #inflow = PrescribedViscousBoundary(q_func=inflow_init)
     #inflow = PrescribedViscousBoundary()
     #outflow = PrescribedViscousBoundary(q_func=outflow_init)
     #outflow = PrescribedViscousBoundary()
-    #wall = IsothermalNoSlipBoundary()
+    wall = IsothermalNoSlipBoundary()
     #wall = AdiabaticNoslipMovingBoundary()
-    wall = DummyBoundary()
+    #wall = DummyBoundary()
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
@@ -1157,8 +1215,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
 
     def my_rhs(t, state):
         return (
-            euler_operator(discr, cv=state, time=t, boundaries=boundaries, eos=eos)
-            #ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
+            #euler_operator(discr, cv=state, time=t, boundaries=boundaries, eos=eos)
+            ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
             #+ make_conserved(
                 #dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
                                    #boundary_kwargs={"time": t, "eos": eos},

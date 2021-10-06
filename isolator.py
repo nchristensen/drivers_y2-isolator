@@ -366,6 +366,13 @@ class InitACTII:
             gamma=gamma
         )
 
+        # modify the temperature in the near wall region to match the isothermal boundaries
+        sigma_temperature = 2500
+        wall_temperature = 300
+        smoothing_top = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ytop)))
+        smoothing_bottom = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ybottom)))
+        temperature = wall_temperature + (temperature - wall_temperature)*smoothing_top*smoothing_bottom
+
         mass = pressure/temperature/gas_const
         velocity = np.zeros(self._dim, dtype=object)
         velocity[0] = mach*actx.np.sqrt(gamma*pressure/mass)
@@ -483,9 +490,22 @@ class UniformModified:
             Equation of state class with method to supply gas *gamma*.
         """
 
+        ypos = x_vec[1]
+        actx = ypos.array_context
+        ymax = 0.0*x_vec[1] + self._ymax
+        ymin = 0.0*x_vec[1] + self._ymin
         ones = (1.0 + x_vec[0]) - x_vec[0]
+
         pressure = self._pressure * ones
         temperature = self._temperature * ones
+
+        # modify the temperature in the near wall region to match the isothermal boundaries
+        sigma_temperature = 2500
+        wall_temperature = 300
+        smoothing_min = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ymin)))
+        smoothing_max = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ymax)))
+        temperature = wall_temperature + (temperature - wall_temperature)*smoothing_min*smoothing_max
+
         velocity = make_obj_array([self._velocity[i] * ones
                                    for i in range(self._dim)])
         y = make_obj_array([self._mass_fracs[i] * ones
@@ -497,10 +517,6 @@ class UniformModified:
         specmass = mass * y
 
         # modify the velocity profile from uniform
-        ypos = x_vec[1]
-        actx = ypos.array_context
-        ymax = 0.0*x_vec[1] + self._ymax
-        ymin = 0.0*x_vec[1] + self._ymin
         smoothing_max = actx.np.tanh(self._sigma*(actx.np.abs(ypos-ymax)))
         smoothing_min = actx.np.tanh(self._sigma*(actx.np.abs(ypos-ymin)))
         velocity[0] = velocity[0]*smoothing_max*smoothing_min
