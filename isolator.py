@@ -248,6 +248,42 @@ def get_y_from_x(x, data):
         y = lefty + (x - leftx)*dy/dx
     return y
 
+def get_theta_from_x(x, data):
+    """
+    Return the linearly interpolated the value of arctan(dy/dx)
+    from the value in data(x,y) at x
+    """
+
+    #find dy/dx from the data
+    #for inode in range(data.size):
+    #dydx
+
+    if x <= data[0][0]:
+        theta = data[0][1]
+    elif x >= data[-1][0]:
+        y = data[-1][1]
+    else:
+        ileft = 0
+        iright = data.shape[0]-1
+
+        # find the bracketing points, simple subdivision search
+        while iright - ileft > 1:
+            ind = int(ileft+(iright - ileft)/2)
+            if x < data[ind][0]:
+                iright = ind
+            else:
+                ileft = ind
+
+        leftx = data[ileft][0]
+        rightx = data[iright][0]
+        lefty = data[ileft][1]
+        righty = data[iright][1]
+
+        dx = rightx - leftx
+        dy = righty - lefty
+        y = lefty + (x - leftx)*dy/dx
+    return y
+
 class InitACTII:
     r"""Solution initializer for flow in the ACT-II facility
 
@@ -266,7 +302,7 @@ class InitACTII:
 
     def __init__(
             self, *, dim=2, nspecies=0, geom_top, geom_bottom,
-            P0, T0
+            P0, T0, temp_wall, temp_sigma, vel_sigma
     ):
         r"""Initialize mixture parameters.
 
@@ -278,9 +314,15 @@ class InitACTII:
             stagnation pressure
         T0: float
             stagnation temperature
-        geom-top: numpy.ndarray
+        temp_wall: float
+            wall temperature
+        temp_sigma: float
+            near-wall temperature relaxation parameter
+        vel_sigma: float
+            near-wall velocity relaxation parameter
+        geom_top: numpy.ndarray
             coordinates for the top wall
-        geom-bottom: numpy.ndarray
+        geom_bottom: numpy.ndarray
             coordinates for the bottom wall
         """
 
@@ -293,6 +335,9 @@ class InitACTII:
         self._T0 = T0
         self._geom_top = geom_top
         self._geom_bottom = geom_bottom
+        self._temp_wall = temp_wall
+        self._temp_sigma = temp_sigma
+        self._vel_sigma = vel_sigma
         # TODO, calculate these from the geometry files
         self._throat_height = 3.61909e-3
         self._x_throat = 0.283718298
@@ -329,11 +374,15 @@ class InitACTII:
 
         ytop_flat = 0*xpos_flat
         ybottom_flat = 0*xpos_flat
+        theta_top_flat = 0*xpos_flat
+        theta_bottom_flat = 0*xpos_flat
         mach_flat = 0*xpos_flat
         throat_height = 1
         for inode in range(xpos_flat.size):
             ytop_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_top)
             ybottom_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_bottom)
+            #theta_top_flat[inode] = get_theta_from_x(xpos_flat[inode], self._geom_top)
+            #theta_bottom_flat[inode] = get_theta_from_x(xpos_flat[inode], self._geom_bottom)
             if ytop_flat[inode] - ybottom_flat[inode] < throat_height:
                 throat_height = ytop_flat[inode] -ybottom_flat[inode]
                 throat_loc = xpos_flat[inode]
@@ -367,10 +416,11 @@ class InitACTII:
         )
 
         # modify the temperature in the near wall region to match the isothermal boundaries
-        sigma_temperature = 2500
-        wall_temperature = 300
-        smoothing_top = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ytop)))
-        smoothing_bottom = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ybottom)))
+        #sigma_temperature = 2500
+        sigma = self._temp_sigma
+        wall_temperature = self._temp_wall
+        smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
+        smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
         temperature = wall_temperature + (temperature - wall_temperature)*smoothing_top*smoothing_bottom
 
         mass = pressure/temperature/gas_const
@@ -379,7 +429,7 @@ class InitACTII:
 
         # modify the velocity in the near-wall region to have a tanh profile
         # this approximates the BL velocity profile
-        sigma = 1000
+        sigma = self._vel_sigma
         smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
         smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
         velocity[0] = velocity[0]*smoothing_top*smoothing_bottom
@@ -387,7 +437,6 @@ class InitACTII:
         # zero out the velocity in the cavity region, we let the flow develop here naturally
         # initially in pressure/temperature equilibrium with the exterior flow
         zeros = 0*xpos
-        #xc_left = zeros + 0.65163 
         xc_left = zeros + 0.65163 - 0.000001
         xc_right = zeros + 0.72163 + 0.000001
         yc_top = zeros - 0.0083245
@@ -425,7 +474,8 @@ class UniformModified:
     def __init__(
             self, *, dim=1, nspecies=0, pressure=1.0, temperature=2.5,
             velocity=None, mass_fracs=None,
-            sigma=0., ymin=0., ymax=1.0
+            temp_wall, temp_sigma, vel_sigma,
+            ymin=0., ymax=1.0
     ):
         r"""Initialize uniform flow parameters.
 
@@ -441,8 +491,12 @@ class UniformModified:
             specifies the pressure
         velocity: numpy.ndarray
             specifies the flow velocity
-        sigma: float
-            specifies the sigma used in the tanh function for smoothing
+        temp_wall: float
+            wall temperature
+        temp_sigma: float
+            near-wall temperature relaxation parameter
+        vel_sigma: float
+            near-wall velocity relaxation parameter
         ymin: flaot
             minimum y-coordinate for smoothing
         ymax: float
@@ -474,7 +528,9 @@ class UniformModified:
         self._pressure = pressure
         self._temperature = temperature
         self._dim = dim
-        self._sigma = sigma
+        self._temp_wall = temp_wall
+        self._temp_sigma = temp_sigma
+        self._vel_sigma = vel_sigma
         self._ymin = ymin
         self._ymax = ymax
 
@@ -500,10 +556,10 @@ class UniformModified:
         temperature = self._temperature * ones
 
         # modify the temperature in the near wall region to match the isothermal boundaries
-        sigma_temperature = 2500
-        wall_temperature = 300
-        smoothing_min = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ymin)))
-        smoothing_max = actx.np.tanh(sigma_temperature*(actx.np.abs(ypos-ymax)))
+        sigma = self._temp_sigma
+        wall_temperature = self._temp_wall
+        smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
+        smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
         temperature = wall_temperature + (temperature - wall_temperature)*smoothing_min*smoothing_max
 
         velocity = make_obj_array([self._velocity[i] * ones
@@ -516,9 +572,10 @@ class UniformModified:
             mass = pressure/temperature/eos.gas_const()
         specmass = mass * y
 
+        sigma = self._vel_sigma
         # modify the velocity profile from uniform
-        smoothing_max = actx.np.tanh(self._sigma*(actx.np.abs(ypos-ymax)))
-        smoothing_min = actx.np.tanh(self._sigma*(actx.np.abs(ypos-ymin)))
+        smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
+        smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
         velocity[0] = velocity[0]*smoothing_max*smoothing_min
 
         mom = mass*velocity
@@ -784,15 +841,23 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     geometry_bottom = comm.bcast(geometry_bottom, root=0)
     geometry_top = comm.bcast(geometry_top, root=0)
 
+    # parameters to adjust the shape of the initialization
+    vel_sigma = 2000
+    temp_sigma = 2500
+    temp_wall = 300
+
     bulk_init = InitACTII(geom_top=geometry_top, geom_bottom=geometry_bottom,
-                           P0=total_pres_inflow, T0=total_temp_inflow)
+                           P0=total_pres_inflow, T0=total_temp_inflow,
+                           temp_wall=temp_wall, temp_sigma=temp_sigma, vel_sigma=vel_sigma)
 
     inflow_init = UniformModified(
         dim=dim,
         temperature=temp_inflow,
         pressure=pres_inflow,
         velocity=vel_inflow,
-        sigma=1000,
+        temp_wall=temp_wall,
+        temp_sigma=temp_sigma,
+        vel_sigma=vel_sigma,
         ymin=-0.0270645,
         ymax=0.0270645
     )
@@ -802,7 +867,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         temperature=temp_outflow,
         pressure=pres_outflow,
         velocity=vel_outflow,
-        sigma=1000,
+        temp_wall=temp_wall,
+        temp_sigma=temp_sigma,
+        vel_sigma=vel_sigma,
         ymin=-0.016874377,
         ymax=0.011675488
     )
