@@ -248,7 +248,7 @@ def get_y_from_x(x, data):
         y = lefty + (x - leftx)*dy/dx
     return y
 
-def get_theta_from_x(x, data):
+def get_theta_from_data(x, data):
     """
     Return the linearly interpolated the value of arctan(dy/dx)
     from the value in data(x,y) at x
@@ -257,32 +257,12 @@ def get_theta_from_x(x, data):
     #find dy/dx from the data
     #for inode in range(data.size):
     #dydx
+    #theta = data
+    #for index in range(1:data[0].size-1)
+        #theta[index][1] = (data[index+1][1]-data[index-1][1])/(data[index+1][0]-data[index-1][0])
+    #theta[index][1] = (data[index+1][1]-data[index-1][1])/(data[index+1][0]-data[index-1][0])
 
-    if x <= data[0][0]:
-        theta = data[0][1]
-    elif x >= data[-1][0]:
-        y = data[-1][1]
-    else:
-        ileft = 0
-        iright = data.shape[0]-1
-
-        # find the bracketing points, simple subdivision search
-        while iright - ileft > 1:
-            ind = int(ileft+(iright - ileft)/2)
-            if x < data[ind][0]:
-                iright = ind
-            else:
-                ileft = ind
-
-        leftx = data[ileft][0]
-        rightx = data[iright][0]
-        lefty = data[ileft][1]
-        righty = data[iright][1]
-
-        dx = rightx - leftx
-        dy = righty - lefty
-        y = lefty + (x - leftx)*dy/dx
-    return y
+    return theta
 
 class InitACTII:
     r"""Solution initializer for flow in the ACT-II facility
@@ -369,6 +349,7 @@ class InitACTII:
 
         from meshmode.dof_array import flatten_to_numpy
         xpos_flat = flatten_to_numpy(actx, xpos)
+        ypos_flat = flatten_to_numpy(actx, ypos)
         gamma = eos.gamma()
         gas_const = eos.gas_const()
 
@@ -377,12 +358,38 @@ class InitACTII:
         theta_top_flat = 0*xpos_flat
         theta_bottom_flat = 0*xpos_flat
         mach_flat = 0*xpos_flat
+        theta_flat = 0*xpos_flat
         throat_height = 1
+
+        #find dy/dx from the data
+        #for inode in range(data.size):
+        #dydx
+        #theta_geom_top = get_theta_from_data(self._geom_top.copy())
+        #theta_geom_bottom = self._geom_bottom.copy()
+
+        def get_theta_from_data(data):
+            """ Calculate theta = arctan(dy/dx)
+                Where data[][0] = x and data[][1] = y
+            """
+
+            theta = data.copy()
+            for index in range(1,theta.shape[0]-1):
+                #print(f"index {index}")
+                theta[index][1] = np.arctan((data[index+1][1]-data[index-1][1])/
+                                  (data[index+1][0]-data[index-1][0]))
+            theta[0][1] = np.arctan(data[1][1]-data[0][1])/(data[1][0]-data[0][0])
+            theta[-1][1] = np.arctan(data[-1][1]-data[-2][1])/(data[-1][0]-data[-2][0])
+            return(theta)
+
+        theta_geom_top = get_theta_from_data(self._geom_top)
+        theta_geom_bottom = get_theta_from_data(self._geom_bottom)
+        #print(f"theta_geom_top {theta_geom_top}")
+
         for inode in range(xpos_flat.size):
             ytop_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_top)
             ybottom_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_bottom)
-            #theta_top_flat[inode] = get_theta_from_x(xpos_flat[inode], self._geom_top)
-            #theta_bottom_flat[inode] = get_theta_from_x(xpos_flat[inode], self._geom_bottom)
+            theta_top_flat[inode] = get_y_from_x(xpos_flat[inode], theta_geom_top)
+            theta_bottom_flat[inode] = get_y_from_x(xpos_flat[inode], theta_geom_bottom)
             if ytop_flat[inode] - ybottom_flat[inode] < throat_height:
                 throat_height = ytop_flat[inode] -ybottom_flat[inode]
                 throat_loc = xpos_flat[inode]
@@ -390,6 +397,10 @@ class InitACTII:
         #print(f"throat height {throat_height}")
         for inode in range(xpos_flat.size):
             area_ratio = (ytop_flat[inode] - ybottom_flat[inode])/throat_height
+            theta_flat[inode] = (theta_bottom_flat[inode] +
+                          (theta_top_flat[inode]-theta_bottom_flat[inode])/
+                          (ytop_flat[inode]-ybottom_flat[inode])*
+                          (ypos_flat[inode] - ybottom_flat[inode]))
             if xpos_flat[inode] < throat_loc:
                 mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=0.01)
             elif xpos_flat[inode] >throat_loc:
@@ -403,6 +414,7 @@ class InitACTII:
         ytop = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ytop_flat)
         ybottom = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ybottom_flat)
         mach = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), mach_flat)
+        theta = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), theta_flat)
 
         pressure = getIsentropicPressure(
             mach=mach,
@@ -425,6 +437,7 @@ class InitACTII:
 
         mass = pressure/temperature/gas_const
         velocity = np.zeros(self._dim, dtype=object)
+        # the magnitude
         velocity[0] = mach*actx.np.sqrt(gamma*pressure/mass)
 
         # modify the velocity in the near-wall region to have a tanh profile
@@ -433,6 +446,10 @@ class InitACTII:
         smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
         smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
         velocity[0] = velocity[0]*smoothing_top*smoothing_bottom
+
+        # split into x and y components
+        velocity[1] = velocity[0]*actx.np.sin(theta)
+        velocity[0] = velocity[0]*actx.np.cos(theta)
 
         # zero out the velocity in the cavity region, we let the flow develop here naturally
         # initially in pressure/temperature equilibrium with the exterior flow
