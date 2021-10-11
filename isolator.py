@@ -35,7 +35,7 @@ import pyopencl as cl
 import numpy.linalg as la  # noqa
 import pyopencl.array as cla  # noqa
 import math
-from functools import partial
+from pytools.obj_array import make_obj_array
 
 
 from meshmode.array_context import (
@@ -44,7 +44,6 @@ from meshmode.array_context import (
     #PytatoPyOpenCLArrayContext
 )
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
-from meshmode.dof_array import flatten_to_numpy
 from arraycontext import thaw, freeze
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
@@ -59,7 +58,6 @@ from mirgecom.logging_quantities import (
     logmgr_add_cl_device_info,
     logmgr_set_time,
     LogUserQuantity,
-    logmgr_add_device_memory_usage,
     set_sim_state
 )
 
@@ -84,12 +82,11 @@ from mirgecom.fluid import make_conserved
 from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
     PrescribedInviscidBoundary,
-    PrescribedViscousBoundary,
+    #PrescribedViscousBoundary,
     IsothermalNoSlipBoundary,
-    AdiabaticNoslipMovingBoundary,
-    DummyBoundary
+    #AdiabaticNoslipMovingBoundary,
 )
-from mirgecom.initializers import (Uniform, PlanarDiscontinuity)
+#from mirgecom.initializers import (Uniform, PlanarDiscontinuity)
 from mirgecom.eos import IdealSingleGas
 from mirgecom.transport import SimpleTransport
 
@@ -104,35 +101,16 @@ class MyRuntimeError(RuntimeError):
 
 def get_mesh(read_mesh=True):
     """Get the mesh."""
-    if read_mesh:
-        from meshmode.mesh.io import read_gmsh
-        mesh_filename = "data/isolator.msh"
-        mesh = read_gmsh(mesh_filename, force_ambient_dim=2)
-    else:
-        left_boundary_loc = 0.2
-        right_boundary_loc = 0.4
-        bottom_boundary_loc = 0.0
-        top_boundary_loc = 0.05
-        char_len_x = 0.002
-        char_len_y = 0.001
-        box_ll = (left_boundary_loc, bottom_boundary_loc)
-        box_ur = (right_boundary_loc, top_boundary_loc)
-        num_elements = (int((box_ur[0]-box_ll[0])/char_len_x),
-                            int((box_ur[1]-box_ll[1])/char_len_y))
-
-        from meshmode.mesh.generation import generate_regular_rect_mesh
-        mesh = partial(generate_regular_rect_mesh, a=box_ll, b=box_ur, n=num_elements,
-          boundary_tag_to_face={
-              "inflow":["-x"],
-              "outflow":["+x"],
-              "wall":["+y","-y"]
-              }
-        )
+    from meshmode.mesh.io import read_gmsh
+    mesh_filename = "data/isolator.msh"
+    mesh = read_gmsh(mesh_filename, force_ambient_dim=2)
 
     return mesh
 
+
 def sponge(cv, cv_ref, sigma):
     return sigma*(cv_ref - cv)
+
 
 class InitSponge:
     r"""Solution initializer for flow in the ACT-II facility
@@ -184,19 +162,23 @@ class InitSponge:
 
         return self._amplitude * actx.np.where(
             actx.np.greater(xpos, x0),
-            zeros + ((xpos - self._x0)/self._thickness)*((xpos - self._x0)/self._thickness),
+            (zeros + ((xpos - self._x0)/self._thickness) *
+            ((xpos - self._x0)/self._thickness)),
             zeros + 0.0
         )
+
 
 def getIsentropicPressure(mach, P0, gamma):
     pressure = (1. + (gamma - 1.)*0.5*mach**2)
     pressure = P0*pressure**(-gamma / (gamma - 1.))
     return pressure
 
+
 def getIsentropicTemperature(mach, T0, gamma):
     temperature = (1. + (gamma - 1.)*0.5*mach**2)
     temperature = T0/temperature
     return temperature
+
 
 def getMachFromAreaRatio(area_ratio, gamma, mach_guess=0.01):
     error = 1.0e-8
@@ -215,6 +197,7 @@ def getMachFromAreaRatio(area_ratio, gamma, mach_guess=0.01):
         M0 = M1
 
     return M1
+
 
 def get_y_from_x(x, data):
     """
@@ -248,21 +231,22 @@ def get_y_from_x(x, data):
         y = lefty + (x - leftx)*dy/dx
     return y
 
-def get_theta_from_data(x, data):
+
+def get_theta_from_data(data):
     """
-    Return the linearly interpolated the value of arctan(dy/dx)
-    from the value in data(x,y) at x
+    Calculate theta = arctan(dy/dx)
+    Where data[][0] = x and data[][1] = y
     """
 
-    #find dy/dx from the data
-    #for inode in range(data.size):
-    #dydx
-    #theta = data
-    #for index in range(1:data[0].size-1)
-        #theta[index][1] = (data[index+1][1]-data[index-1][1])/(data[index+1][0]-data[index-1][0])
-    #theta[index][1] = (data[index+1][1]-data[index-1][1])/(data[index+1][0]-data[index-1][0])
+    theta = data.copy()
+    for index in range(1, theta.shape[0]-1):
+        #print(f"index {index}")
+        theta[index][1] = np.arctan((data[index+1][1]-data[index-1][1]) /
+                          (data[index+1][0]-data[index-1][0]))
+    theta[0][1] = np.arctan(data[1][1]-data[0][1])/(data[1][0]-data[0][0])
+    theta[-1][1] = np.arctan(data[-1][1]-data[-2][1])/(data[-1][0]-data[-2][0])
+    return(theta)
 
-    return theta
 
 class InitACTII:
     r"""Solution initializer for flow in the ACT-II facility
@@ -361,58 +345,39 @@ class InitACTII:
         theta_flat = 0*xpos_flat
         throat_height = 1
 
-        #find dy/dx from the data
-        #for inode in range(data.size):
-        #dydx
-        #theta_geom_top = get_theta_from_data(self._geom_top.copy())
-        #theta_geom_bottom = self._geom_bottom.copy()
-
-        def get_theta_from_data(data):
-            """ Calculate theta = arctan(dy/dx)
-                Where data[][0] = x and data[][1] = y
-            """
-
-            theta = data.copy()
-            for index in range(1,theta.shape[0]-1):
-                #print(f"index {index}")
-                theta[index][1] = np.arctan((data[index+1][1]-data[index-1][1])/
-                                  (data[index+1][0]-data[index-1][0]))
-            theta[0][1] = np.arctan(data[1][1]-data[0][1])/(data[1][0]-data[0][0])
-            theta[-1][1] = np.arctan(data[-1][1]-data[-2][1])/(data[-1][0]-data[-2][0])
-            return(theta)
-
         theta_geom_top = get_theta_from_data(self._geom_top)
         theta_geom_bottom = get_theta_from_data(self._geom_bottom)
-        #print(f"theta_geom_top {theta_geom_top}")
 
         for inode in range(xpos_flat.size):
             ytop_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_top)
             ybottom_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_bottom)
             theta_top_flat[inode] = get_y_from_x(xpos_flat[inode], theta_geom_top)
-            theta_bottom_flat[inode] = get_y_from_x(xpos_flat[inode], theta_geom_bottom)
+            theta_bottom_flat[inode] = get_y_from_x(xpos_flat[inode],
+                                                    theta_geom_bottom)
             if ytop_flat[inode] - ybottom_flat[inode] < throat_height:
-                throat_height = ytop_flat[inode] -ybottom_flat[inode]
+                throat_height = ytop_flat[inode] - ybottom_flat[inode]
                 throat_loc = xpos_flat[inode]
 
         #print(f"throat height {throat_height}")
         for inode in range(xpos_flat.size):
             area_ratio = (ytop_flat[inode] - ybottom_flat[inode])/throat_height
             theta_flat[inode] = (theta_bottom_flat[inode] +
-                          (theta_top_flat[inode]-theta_bottom_flat[inode])/
-                          (ytop_flat[inode]-ybottom_flat[inode])*
+                          (theta_top_flat[inode]-theta_bottom_flat[inode]) /
+                          (ytop_flat[inode]-ybottom_flat[inode]) *
                           (ypos_flat[inode] - ybottom_flat[inode]))
             if xpos_flat[inode] < throat_loc:
-                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=0.01)
-            elif xpos_flat[inode] >throat_loc:
-                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio, gamma=gamma, mach_guess=1.01)
+                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio,
+                                                        gamma=gamma, mach_guess=0.01)
+            elif xpos_flat[inode] > throat_loc:
+                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio,
+                                                        gamma=gamma, mach_guess=1.01)
             else:
                 mach_flat[inode] = 1.0
 
-        ind = 0
-
         from meshmode.dof_array import unflatten_from_numpy
         ytop = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ytop_flat)
-        ybottom = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ybottom_flat)
+        ybottom = unflatten_from_numpy(actx, discr.discr_from_dd("vol"),
+                                       ybottom_flat)
         mach = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), mach_flat)
         theta = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), theta_flat)
 
@@ -427,13 +392,14 @@ class InitACTII:
             gamma=gamma
         )
 
-        # modify the temperature in the near wall region to match the isothermal boundaries
-        #sigma_temperature = 2500
+        # modify the temperature in the near wall region to match the
+        # isothermal boundaries
         sigma = self._temp_sigma
         wall_temperature = self._temp_wall
         smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
         smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
-        temperature = wall_temperature + (temperature - wall_temperature)*smoothing_top*smoothing_bottom
+        temperature = (wall_temperature +
+            (temperature - wall_temperature)*smoothing_top*smoothing_bottom)
 
         mass = pressure/temperature/gas_const
         velocity = np.zeros(self._dim, dtype=object)
@@ -451,13 +417,12 @@ class InitACTII:
         velocity[1] = velocity[0]*actx.np.sin(theta)
         velocity[0] = velocity[0]*actx.np.cos(theta)
 
-        # zero out the velocity in the cavity region, we let the flow develop here naturally
+        # zero out the velocity in the cavity region, let the flow develop naturally
         # initially in pressure/temperature equilibrium with the exterior flow
         zeros = 0*xpos
         xc_left = zeros + 0.65163 - 0.000001
         xc_right = zeros + 0.72163 + 0.000001
         yc_top = zeros - 0.0083245
-        yc_bottom = zeros - 0.03
 
         left_edge = actx.np.greater(xpos, xc_left)
         right_edge = actx.np.less(xpos, xc_right)
@@ -475,7 +440,6 @@ class InitACTII:
         )
 
 
-from pytools.obj_array import make_obj_array
 class UniformModified:
     r"""Solution initializer for a uniform flow with boundary layer smoothing.
 
@@ -572,12 +536,14 @@ class UniformModified:
         pressure = self._pressure * ones
         temperature = self._temperature * ones
 
-        # modify the temperature in the near wall region to match the isothermal boundaries
+        # modify the temperature in the near wall region to match
+        # the isothermal boundaries
         sigma = self._temp_sigma
         wall_temperature = self._temp_wall
         smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
         smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
-        temperature = wall_temperature + (temperature - wall_temperature)*smoothing_min*smoothing_max
+        temperature = (wall_temperature +
+                       (temperature - wall_temperature)*smoothing_min*smoothing_max)
 
         velocity = make_obj_array([self._velocity[i] * ones
                                    for i in range(self._dim)])
@@ -609,9 +575,9 @@ class UniformModified:
 
 
 @mpi_entry_point
-def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profiling=False,
-         use_logmgr=False, user_input_file=None, actx_class=PyOpenCLArrayContext,
-         casename=None):
+def main(ctx_factory=cl.create_some_context, restart_filename=None,
+         use_profiling=False, use_logmgr=False, user_input_file=None,
+         actx_class=PyOpenCLArrayContext, casename=None):
     """Drive the Y0 example."""
     cl_ctx = ctx_factory()
 
@@ -639,7 +605,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
         allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
     # an array context for things that just can't lazy
-    init_actx = PyOpenCLArrayContext(queue, allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    init_actx = PyOpenCLArrayContext(queue,
+        allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
     # default i/o junk frequencies
     nviz = 500
@@ -665,7 +632,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     alpha_sc = 0.3
     s0_sc = -5.0
     kappa_sc = 0.5
-
 
     if user_input_file:
         input_data = None
@@ -795,7 +761,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     dim = 2
     vel_inflow = np.zeros(shape=(dim,))
     vel_outflow = np.zeros(shape=(dim,))
-    vel_bkrnd = np.zeros(shape=(dim,))
     total_pres_inflow = 2.745e5
     total_temp_inflow = 2076.43
 
@@ -864,8 +829,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     temp_wall = 300
 
     bulk_init = InitACTII(geom_top=geometry_top, geom_bottom=geometry_bottom,
-                           P0=total_pres_inflow, T0=total_temp_inflow,
-                           temp_wall=temp_wall, temp_sigma=temp_sigma, vel_sigma=vel_sigma)
+                          P0=total_pres_inflow, T0=total_temp_inflow,
+                          temp_wall=temp_wall, temp_sigma=temp_sigma,
+                          vel_sigma=vel_sigma)
 
     inflow_init = UniformModified(
         dim=dim,
@@ -942,9 +908,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
     sponge_amp = 1.0/current_dt/1000
     sponge_x0 = 0.9
 
-    sponge_init = InitSponge(x0=sponge_x0, thickness=sponge_thickness, amplitude=sponge_amp)
+    sponge_init = InitSponge(x0=sponge_x0, thickness=sponge_thickness,
+                             amplitude=sponge_amp)
     sponge_sigma = sponge_init(x_vec=thaw(discr.nodes(), actx))
-    ref_state = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx), eos=eos, time=0)
+    ref_state = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx),
+                          eos=eos, time=0)
     ref_state = thaw(freeze(ref_state, init_actx), actx)
 
     vis_timer = None
@@ -1002,13 +970,13 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
             restart_state = restart_data["state"]
             current_state = connection(restart_state)
         if logmgr:
-            from mirgecom.logging_quantities import logmgr_set_time
             logmgr_set_time(logmgr, current_step, current_t)
     else:
         # Set the current state from time 0
         if rank == 0:
             logging.info("Initializing soln.")
-        current_state = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx), eos=eos, time=0)
+        current_state = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx),
+                                  eos=eos, time=0)
         current_state = thaw(freeze(current_state, init_actx), actx)
 
     visualizer = make_visualizer(discr)
@@ -1031,7 +999,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
             tagged_cells = smoothness_indicator(discr, state.mass, s0=s0_sc,
                                                 kappa=kappa_sc)
 
-        mach = actx.np.sqrt(np.dot(state.velocity, state.velocity))/eos.sound_speed(state)
+        mach = (actx.np.sqrt(np.dot(state.velocity, state.velocity)) /
+                            eos.sound_speed(state))
         viz_fields = [("cv", state),
                       ("dv", dv),
                       ("mach", mach),
@@ -1161,7 +1130,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None, use_profilin
                       pre_step_callback=my_pre_step,
                       post_step_callback=my_post_step, dt=current_dt,
                       state=current_state, t=current_t, t_final=t_final)
-                      #state=thaw(current_state, actx), t=current_t, t_final=t_final)
 
     # Dump the final data
     if rank == 0:
