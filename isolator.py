@@ -612,7 +612,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     nviz = 500
     nhealth = 1
     nrestart = 5000
-    nstatus = 25
+    nstatus = 1
 
     # default timestepping control
     integrator = "rk4"
@@ -699,8 +699,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         raise RuntimeError(error_message)
 
     s0_sc = np.log10(1.0e-4 / np.power(order, 4))
-    # This uses proportionality constant of 3.0e-1 and taking 0p5x as the base grid h
-    alpha_sc = (alpha_sc*(1.0)/order)
     if rank == 0:
         print(f"\tShock capturing parameters: alpha {alpha_sc}, "
               f"s0 {s0_sc}, kappa {kappa_sc}")
@@ -901,7 +899,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         actx, local_mesh, order=order, mpi_communicator=comm
     )
     if rank == 0:
-        logging.info("Done Making discretization")
+        logging.info("Done making discretization")
 
     # initialize the sponge field
     sponge_thickness = 0.09
@@ -992,7 +990,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     if rank == 0:
         logger.info(init_message)
 
-    def my_write_viz(step, t, state, dv=None, tagged_cells=None, ts_field=None):
+    def my_write_viz(step, t, state, dv=None, tagged_cells=None,
+                     ts_field=None, alpha_field=None):
         if dv is None:
             dv = eos.dependent_vars(state)
         if tagged_cells is None:
@@ -1006,6 +1005,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                       ("mach", mach),
                       ("velocity", state.velocity),
                       ("sponge_sigma", sponge_sigma),
+                      ("alpha", alpha_field),
                       ("tagged_cells", tagged_cells),
                       ("dt" if constant_cfl else "cfl", ts_field)]
         write_visfile(discr, viz_fields, visualizer, vizname=vizname,
@@ -1042,21 +1042,96 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         return health_error
 
-    def my_get_timestep(t, dt, state):
+    def my_get_viscous_timestep(discr, eos, cv, alpha):
+        """Routine returns the the node-local maximum stable viscous timestep.
+
+        Parameters
+        ----------
+        discr: grudge.eager.EagerDGDiscretization
+            the discretization to use
+        eos: :class:`~mirgecom.eos.GasEOS`
+            A gas equation of state
+        cv: :class:`~mirgecom.fluid.ConservedVars`
+            Fluid solution
+        alpha: :class:`~meshmode.DOFArray`
+            Arfifical viscosity
+
+        Returns
+        -------
+        :class:`~meshmode.dof_array.DOFArray`
+            The maximum stable timestep at each node.
+        """
+        from grudge.dt_utils import characteristic_lengthscales
+        from mirgecom.fluid import compute_wavespeed
+
+        length_scales = characteristic_lengthscales(cv.array_context, discr)
+
+        mu = 0
+        d_alpha_max = 0
+        transport = eos.transport_model()
+        if transport:
+            from mirgecom.viscous import get_local_max_species_diffusivity
+            mu = transport.viscosity(eos, cv)
+            d_alpha_max = \
+                get_local_max_species_diffusivity(
+                    cv.array_context, discr,
+                    transport.species_diffusivity(eos, cv)
+                )
+
+        return(
+            length_scales / (compute_wavespeed(eos, cv)
+            + ((mu + d_alpha_max + alpha) / length_scales))
+        )
+
+    def my_get_viscous_cfl(discr, eos, dt, cv, alpha):
+        """Calculate and return node-local CFL based on current state and timestep.
+
+        Parameters
+        ----------
+        discr: :class:`grudge.eager.EagerDGDiscretization`
+            the discretization to use
+        eos: :class:`~mirgecom.eos.GasEOS`
+            A gas equation of state
+        dt: float or :class:`~meshmode.dof_array.DOFArray`
+            A constant scalar dt or node-local dt
+        cv: :class:`~mirgecom.fluid.ConservedVars`
+            The fluid conserved variables
+        alpha: :class:`~meshmode.DOFArray`
+            Arfifical viscosity
+
+        Returns
+        -------
+        :class:`~meshmode.dof_array.DOFArray`
+            The CFL at each node.
+        """
+        return dt / my_get_viscous_timestep(discr, eos=eos, cv=cv, alpha=alpha)
+
+    def my_get_timestep(t, dt, state, alpha):
         t_remaining = max(0, t_final - t)
         if constant_cfl:
-            from mirgecom.viscous import get_viscous_timestep
-            ts_field = current_cfl * get_viscous_timestep(discr, eos=eos, cv=state)
+            ts_field = current_cfl * my_get_viscous_timestep(discr, eos=eos,
+                                                             cv=state, alpha=alpha)
             from grudge.op import nodal_min
             dt = nodal_min(discr, "vol", ts_field)
             cfl = current_cfl
         else:
-            from mirgecom.viscous import get_viscous_cfl
-            ts_field = get_viscous_cfl(discr, eos=eos, dt=dt, cv=state)
+            ts_field = my_get_viscous_cfl(discr, eos=eos, dt=dt,
+                                          cv=state, alpha=alpha)
             from grudge.op import nodal_max
             cfl = nodal_max(discr, "vol", ts_field)
 
         return ts_field, cfl, min(t_remaining, dt)
+
+    def my_get_alpha(discr, state, alpha):
+        """ Scale alpha by the element characteristic length """
+
+        from grudge.dt_utils import characteristic_lengthscales
+        #from mirgecom.fluid import compute_wavespeed
+
+        length_scales = characteristic_lengthscales(actx, discr)
+        alpha_field = alpha*length_scales/order
+
+        return alpha_field
 
     def my_pre_step(step, t, dt, state):
         try:
@@ -1065,7 +1140,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             if logmgr:
                 logmgr.tick_before()
 
-            ts_field, cfl, dt = my_get_timestep(t, dt, state)
+            alpha_field = my_get_alpha(discr, state, alpha_sc)
+            ts_field, cfl, dt = my_get_timestep(t, dt, state, alpha_field)
             log_cfl.set_quantity(cfl)
 
             do_viz = check_step(step=step, interval=nviz)
@@ -1088,7 +1164,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             if do_viz:
                 if dv is None:
                     dv = eos.dependent_vars(state)
-                my_write_viz(step=step, t=t, state=state, dv=dv)
+                my_write_viz(step=step, t=t, state=state, dv=dv,
+                             ts_field=ts_field, alpha_field=alpha_field)
 
         except MyRuntimeError:
             if rank == 0:
@@ -1112,12 +1189,13 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         return state, dt
 
     def my_rhs(t, state):
+        alpha_field = my_get_alpha(discr, state, alpha_sc)
         return (
             ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
             + make_conserved(
                 dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
                                    boundary_kwargs={"time": t, "eos": eos},
-                                   alpha=alpha_sc, s0=s0_sc, kappa=kappa_sc)
+                                   alpha=alpha_field, s0=s0_sc, kappa=kappa_sc)
             )
             + sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
         )
@@ -1135,7 +1213,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     if rank == 0:
         logger.info("Checkpointing final state ...")
     final_dv = eos.dependent_vars(current_state)
-    my_write_viz(step=current_step, t=current_t, state=current_state, dv=final_dv)
+    alpha_field = my_get_alpha(discr, current_state, alpha_sc)
+    ts_field, cfl, dt = my_get_timestep(t=current_t, dt=current_dt,
+                                        state=current_state, alpha=alpha_field)
+    my_write_viz(step=current_step, t=current_t, state=current_state, dv=final_dv,
+                 ts_field=ts_field, alpha_field=alpha_field)
     my_write_restart(step=current_step, t=current_t, state=current_state)
 
     if logmgr:
