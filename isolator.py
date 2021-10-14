@@ -1126,10 +1126,26 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         """ Scale alpha by the element characteristic length """
 
         from grudge.dt_utils import characteristic_lengthscales
-        #from mirgecom.fluid import compute_wavespeed
+        from mirgecom.fluid import compute_wavespeed
+
+        mach = (actx.np.sqrt(np.dot(state.velocity, state.velocity)) /
+                            eos.sound_speed(state))
+        gamma = eos.gamma()
+        delta_u = 0
+
+        # set mach to 1 everywhere that's subsonic, this will make delta_u 0 and add no viscosity
+        supersonic = actx.np.greater(mach, 1.0)
+        mach_mod = actx.np.where(supersonic, mach, 1.0)
+        delta_u = 2*eos.sound_speed(state)*(mach_mod*mach_mod - 1)/((gamma + 1)*mach_mod*mach_mod)
+
+        rho_star = state.mass*(1 + 2/(gamma + 1) + (gamma - 1)*mach/2)**(1/(gamma - 1))
+
 
         length_scales = characteristic_lengthscales(actx, discr)
-        alpha_field = alpha*length_scales/order
+        wavespeed = compute_wavespeed(eos, state)
+        alpha_field = wavespeed*length_scales/order
+        #alpha_field = length_scales/order*delta_u*rho_star
+        #alpha_field = alpha*length_scales/order
 
         return alpha_field
 
