@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# default branch for building mirgecom for this driver
+mirge_branch="y1-production"
+# conda environment name
+conda_env="mirgeDriver.Y2isolator"
+
 usage()
 {
   echo "Usage: $0 [options]"
@@ -8,6 +13,7 @@ usage()
 }
 
 opt_git_ssh=0
+opt_restore_build=0
 
 while [[ $# -gt 0 ]];do
   arg=$1
@@ -15,6 +21,9 @@ while [[ $# -gt 0 ]];do
   case $arg in
     --use-ssh)
       opt_git_ssh=1
+      ;;
+    --restore-build)
+      opt_restore_build=1
       ;;
     --help)
       usage
@@ -28,11 +37,12 @@ while [[ $# -gt 0 ]];do
   esac
 done
 
-# default install script for mirgecom, will build with the current development head
-echo "Building MIRGE-Com from the current development head"
-echo "***WARNING*** may not be compatible with this driver ***WARNING"
-echo "consider build scripts from <platforms> as appropriate"
+git_method=""
+if [ $opt_git_ssh -eq 1 ]; then
+  git_method="--git-ssh"
+fi
 
+# get emirge
 if [ -z "$(ls -A emirge)" ]; then
   if [ $opt_git_ssh -eq 1 ]; then
     echo "git clone git@github.com:illinois-ceesd/emirge.git emirge"
@@ -43,27 +53,61 @@ if [ -z "$(ls -A emirge)" ]; then
   fi
 else
   echo "emirge install already present. Remove to build anew"
+  return 1
 fi
 
-cd emirge
-git_method=""
-if [ $opt_git_ssh -eq 1 ]; then
-  git_method="--git-ssh"
-fi
+# install script for mirgecom, 
+if [ ${opt_build_restore} ]; then
+# attempt to restore an existing build
+  echo "Building MIRGE-Com from existing known configuration"
+  if [ ${MIRGE_PLATFORM}]; then
+    if [ -z "$(ls -A platforms/{MIRGE_PLATFORM})" ]; then
+      echo "Unknown platform ${MIRGE_PLATFORM}"
+      echo "Currently stored configurations are:"
+      ls platforms
+    else
+      echo "Using version information for ${MIRGE_PLATFORM}"
+      cd emirge
 
-if [ -z ${CONDA_PATH+x} ]; then
-  echo "CONDA_PATH unset, installing new conda with emirge"
-  echo "./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=parallel-lazy"
-  ./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=parallel-lazy
+      versionDir="platforms/${MIRGE_PLATFORM}"
+      if [ -z ${CONDA_PATH+x} ]; then
+        echo "CONDA_PATH unset, installing new conda with emirge"
+        echo "./install.sh --env-name=$conda_env $git_method --conda-env=${versionDir}/myenv.yml --pip-pkgs=${versionDir}/myreqs.txt"
+        ./install.sh --env-name=$conda_env $git_method --conda-env=${versionDir}/myenv.yml --pip-pkgs=${versionDir}/myreqs.txt
+      else
+        echo "Using existing Conda installation, ${CONDA_PATH}"
+        echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env --conda-env=${versionDir}/myenv.yml --pip-pkgs=${versionDir}/myreqs.txt"
+        ./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env --conda-env=${versionDir}/myenv.yml --pip-pkgs=${versionDir}/myreqs.txt
+      fi
+    fi
+  else
+    echo "Unknown platform. Set the environment variable MIRGE_PLATFORM for automated build and storage"
+    echo "For example in bash: export MIRGE_PLATFORM=\"mac-m1\""
+    echo "Automated build failed and will now exit."
+  fi
+
 else
-  echo "Using existing Conda installation, ${CONDA_PATH}"
-  echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=mirgeDriver.Y2isolator $git_method --branch=parallel-lazy"
-  ./install.sh --conda-prefix=$CONDA_PATH --env-name=mirgeDriver.Y2isolator $git_method --branch=parallel-lazy
+# build with the current development head
+  echo "Building MIRGE-Com from the current development head"
+  echo "***WARNING*** may not be compatible with this driver ***WARNING"
+  echo "Consider using --restore-build and setting MIRGE_PLATFORM as appropriate for this platform"
+
+  cd emirge
+
+  if [ -z ${CONDA_PATH+x} ]; then
+    echo "CONDA_PATH unset, installing new conda with emirge"
+    echo "./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=${mirge_branch}"
+    ./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=${mirge_branch}
+  else
+    echo "Using existing Conda installation, ${CONDA_PATH}"
+    echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}"
+    ./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}
+  fi
+  cd mirgecom
+  git pull
+  git checkout y1-production
+  git checkout parallel-lazy
+  git checkout -b mrgy1
+  git merge y1-production
+  cd ../
 fi
-cd mirgecom
-git pull
-git checkout y1-production
-git checkout parallel-lazy
-git checkout -b mrgy1
-git merge y1-production
-cd ../

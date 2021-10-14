@@ -1,0 +1,16 @@
+# requirements.txt created by version.sh
+# Date: Thu Oct 14 15:58:02 CDT 2021
+# Host: wirelessprv-10-193-137-95.near.illinois.edu [Darwin wirelessprv-10-193-137-95.near.illinois.edu 20.5.0 Darwin Kernel Version 20.5.0: Sat May  8 05:10:31 PDT 2021; root:xnu-7195.121.3~9/RELEASE_ARM64_T8101 arm64]
+# Python: /Users/someguy/software/Install/Conda/envs/mirgeDriver.Y2isolator/bin/python [Python 3.8.12]
+--editable git+https://github.com/kaushikcfd/arraycontext.git@8109e7e#egg=arraycontext
+--editable git+https://github.com/inducer/dagrt.git@v2021.1-7-g744888a#egg=dagrt
+--editable git+https://github.com/inducer/grudge.git@v2021.1-444-g2af3528#egg=grudge
+--editable git+https://github.com/inducer/leap.git@94f07be#egg=leap
+--editable git+https://github.com/illinois-ceesd/logpyle.git@v2021.0-7-g42e89c8#egg=logpyle
+--editable git+https://github.com/kaushikcfd/loopy.git@f9e08d19#egg=loopy
+--editable git+https://github.com/kaushikcfd/meshmode.git@e392a11#egg=meshmode
+--editable git+https://github.com/illinois-ceesd/mirgecom@7c98ff1#egg=mirgecom
+--editable git+https://github.com/inducer/modepy.git@v2021.1-58-g511f993#egg=modepy
+--editable git+https://github.com/inducer/pymbolic.git@v2021.1-14-g747ee69#egg=pymbolic
+--editable git+https://github.com/ecisneros8/pyrometheus.git@49afb3d#egg=pyrometheus
+--editable git+https://github.com/kaushikcfd/pytato.git@c46006f#egg=pytato
