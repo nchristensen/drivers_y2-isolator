@@ -85,6 +85,7 @@ from mirgecom.boundary import (
     #PrescribedViscousBoundary,
     IsothermalNoSlipBoundary,
     #AdiabaticNoslipMovingBoundary,
+    AdiabaticSlipBoundary
 )
 #from mirgecom.initializers import (Uniform, PlanarDiscontinuity)
 from mirgecom.eos import IdealSingleGas
@@ -396,10 +397,11 @@ class InitACTII:
         # isothermal boundaries
         sigma = self._temp_sigma
         wall_temperature = self._temp_wall
-        smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
-        smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
-        temperature = (wall_temperature +
-            (temperature - wall_temperature)*smoothing_top*smoothing_bottom)
+        if sigma > 0:
+            smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
+            smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
+            temperature = (wall_temperature +
+                (temperature - wall_temperature)*smoothing_top*smoothing_bottom)
 
         mass = pressure/temperature/gas_const
         velocity = np.zeros(self._dim, dtype=object)
@@ -409,9 +411,10 @@ class InitACTII:
         # modify the velocity in the near-wall region to have a tanh profile
         # this approximates the BL velocity profile
         sigma = self._vel_sigma
-        smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
-        smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
-        velocity[0] = velocity[0]*smoothing_top*smoothing_bottom
+        if sigma > 0:
+            smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
+            smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
+            velocity[0] = velocity[0]*smoothing_top*smoothing_bottom
 
         # split into x and y components
         velocity[1] = velocity[0]*actx.np.sin(theta)
@@ -539,11 +542,13 @@ class UniformModified:
         # modify the temperature in the near wall region to match
         # the isothermal boundaries
         sigma = self._temp_sigma
-        wall_temperature = self._temp_wall
-        smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
-        smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
-        temperature = (wall_temperature +
-                       (temperature - wall_temperature)*smoothing_min*smoothing_max)
+        if sigma > 0:
+            wall_temperature = self._temp_wall
+            smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
+            smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
+            temperature = (wall_temperature +
+                           (temperature - wall_temperature) *
+                           smoothing_min*smoothing_max)
 
         velocity = make_obj_array([self._velocity[i] * ones
                                    for i in range(self._dim)])
@@ -557,9 +562,10 @@ class UniformModified:
 
         sigma = self._vel_sigma
         # modify the velocity profile from uniform
-        smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
-        smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
-        velocity[0] = velocity[0]*smoothing_max*smoothing_min
+        if sigma > 0:
+            smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
+            smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
+            velocity[0] = velocity[0]*smoothing_max*smoothing_min
 
         mom = mass*velocity
         if self._nspecies:
@@ -823,8 +829,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     geometry_top = comm.bcast(geometry_top, root=0)
 
     # parameters to adjust the shape of the initialization
-    vel_sigma = 2000
-    temp_sigma = 2500
+    # values less than 0 disable the smoothing
+    vel_sigma = -1
+    temp_sigma = -1
     temp_wall = 300
 
     bulk_init = InitACTII(geom_top=geometry_top, geom_bottom=geometry_bottom,
@@ -861,9 +868,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     # Don't work with AV
     #inflow = PrescribedViscousBoundary(q_func=inflow_init)
     #outflow = PrescribedViscousBoundary(q_func=outflow_init)
-    wall = IsothermalNoSlipBoundary()
+    #wall = IsothermalNoSlipBoundary()
+    wall = AdiabaticSlipBoundary()
     #wall = AdiabaticNoslipMovingBoundary()
-
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,

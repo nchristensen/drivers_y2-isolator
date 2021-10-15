@@ -3,12 +3,9 @@ nrestart: 1000
 nhealth: 1
 nstatus: 1
 current_dt: 5.0e-9
-t_final: 1.e-3
-#t_final: 5.0e-10
+t_final: 5.e-7
 order:  1
-#alpha_sc: 0.
-alpha_sc: 0.001
-#alpha_sc: 10
+alpha_sc: 5.e-2
 kappa_sc: 2.0
 s0_sc: -5.0
 integrator: euler

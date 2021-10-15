@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # default branch for building mirgecom for this driver
-mirge_branch="thg/y1-prod-with-overintegration"
+mirge_branch="parallel-lazy"
+mirge_branch2="thg/y1-prod-with-overintegration"
 # conda environment name
 conda_env="mirgeDriver.Y2isolator-OI"
 
@@ -104,4 +105,11 @@ else
     echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}"
     ./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}
   fi
+  cd mirgecom
+  git pull
+  git checkout ${mirge_branch2}
+  git checkout ${mirge_branch}
+  git checkout -b mrgy1
+  git merge ${mirge_branch2}
+  cd ../
 fi
