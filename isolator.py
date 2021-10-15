@@ -85,7 +85,8 @@ from mirgecom.boundary import (
     #PrescribedViscousBoundary,
     IsothermalNoSlipBoundary,
     #AdiabaticNoslipMovingBoundary,
-    AdiabaticSlipBoundary
+    AdiabaticSlipBoundary,
+    DummyBoundary
 )
 #from mirgecom.initializers import (Uniform, PlanarDiscontinuity)
 from mirgecom.eos import IdealSingleGas
@@ -814,9 +815,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         print(f"outlet rho {rho_outflow}")
         print(f"outlet velocity {vel_outflow[0]}")
 
-    eos = IdealSingleGas(
-        gamma=gamma, gas_const=r, transport_model=transport_model
-    )
+    #eos = IdealSingleGas(
+        #gamma=gamma, gas_const=r, transport_model=transport_model
+    #)
+
+    eos = IdealSingleGas(gamma=gamma, gas_const=r)
 
     # read geometry files
     geometry_bottom = None
@@ -871,6 +874,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     #wall = IsothermalNoSlipBoundary()
     wall = AdiabaticSlipBoundary()
     #wall = AdiabaticNoslipMovingBoundary()
+
+    #inflow = DummyBoundary()
+    #outflow = DummyBoundary()
+    #wall = DummyBoundary()
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
@@ -1233,25 +1240,19 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     def my_rhs(t, state):
         alpha_field = my_get_alpha(discr, state, alpha_sc)
-        return euler_operator(
-            discr,
-            eos,
-            boundaries=boundaries,
-            cv=state,
-            time=t,
-            quad_tag=quad_tag
-        ) + make_conserved(
-            dim,
-            q=av_operator(
-                discr,
-                boundaries,
-                state.join(),
-                alpha_sc,
-                time=t,
-                eos=eos,
-                s0=s0_sc,
-                kappa=kappa_sc,
-                quad_tag=quad_tag
+        return (
+            euler_operator(
+                discr, cv=state, time=t, boundaries=boundaries,
+                eos=eos, quad_tag=quad_tag
+            ) + make_conserved(
+                dim, q=av_operator(
+                    discr, boundaries=boundaries, q=state.join(),
+                    #boundary_kwargs={"time": t, "eos": eos}, alpha=alpha_field,
+                    eos=eos, time=t, alpha=alpha_field,
+                    s0=s0_sc, kappa=kappa_sc, quad_tag=quad_tag
+                )
+            ) + sponge(
+                cv=state, cv_ref=ref_state, sigma=sponge_sigma
             )
         )
 
