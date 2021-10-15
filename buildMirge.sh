@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # default branch for building mirgecom for this driver
-mirge_branch="y1-prod-with-overintegration"
+mirge_branch="thg/y1-prod-with-overintegration"
 # conda environment name
 conda_env="mirgeDriver.Y2isolator-OI"
 
