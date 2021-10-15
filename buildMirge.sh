@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # default branch for building mirgecom for this driver
-mirge_branch="y1-production"
+mirge_branch="y1-prod-with-overintegration"
 # conda environment name
-conda_env="mirgeDriver.Y2isolator"
+conda_env="mirgeDriver.Y2isolator-OI"
 
 usage()
 {
@@ -97,17 +97,10 @@ else
   if [ -z ${CONDA_PATH+x} ]; then
     echo "CONDA_PATH unset, installing new conda with emirge"
     echo "./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=${mirge_branch}"
-    ./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=${mirge_branch}
+    ./install.sh --env-name=$conda_env $git_method --branch=${mirge_branch}
   else
     echo "Using existing Conda installation, ${CONDA_PATH}"
     echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}"
     ./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}
   fi
-  cd mirgecom
-  git pull
-  git checkout y1-production
-  git checkout parallel-lazy
-  git checkout -b mrgy1
-  git merge y1-production
-  cd ../
 fi
