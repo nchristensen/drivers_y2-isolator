@@ -9,6 +9,7 @@ usage()
 {
   echo "Usage: $0 [options]"
   echo "  --use-ssh         Use ssh-keys to clone emirge/mirgecom"
+  echo "  --restore-build   Build with previously stored version information for mirgecom and associated packages"
   echo "  --help            Print this help text."
 }
 
