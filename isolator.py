@@ -61,7 +61,7 @@ from mirgecom.logging_quantities import (
     set_sim_state
 )
 
-from mirgecom.navierstokes import ns_operator
+from mirgecom.euler import euler_operator
 from mirgecom.artificial_viscosity import av_operator, smoothness_indicator
 from mirgecom.simutil import (
     check_step,
@@ -577,7 +577,8 @@ class UniformModified:
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=False, user_input_file=None,
-         actx_class=PyOpenCLArrayContext, casename=None):
+         actx_class=PyOpenCLArrayContext,
+         overintegration=False, casename=None):
     """Drive the Y0 example."""
     cl_ctx = ctx_factory()
 
@@ -863,6 +864,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     wall = IsothermalNoSlipBoundary()
     #wall = AdiabaticNoslipMovingBoundary()
 
+
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
         DTAG_BOUNDARY("outflow"): outflow,
@@ -895,9 +897,26 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     if rank == 0:
         logging.info("Making discretization")
 
+    from meshmode.discretization.poly_element import \
+        QuadratureSimplexGroupFactory
+
+    from grudge.dof_desc import DISCR_TAG_QUAD
+
+    discr_tag_to_group_factory={
+        DISCR_TAG_QUAD: QuadratureSimplexGroupFactory(2*order),
+    }
+
     discr = EagerDGDiscretization(
-        actx, local_mesh, order=order, mpi_communicator=comm
+        actx, local_mesh, order=order,
+        discr_tag_to_group_factory=discr_tag_to_group_factory,
+        mpi_communicator=comm
     )
+
+    if overintegration:
+        quad_tag = DISCR_TAG_QUAD
+    else:
+        quad_tag = None
+
     if rank == 0:
         logging.info("Done making discretization")
 
@@ -958,6 +977,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                 actx,
                 local_mesh,
                 order=restart_order,
+                discr_tag_to_group_factory={
+                    DISCR_TAG_QUAD: QuadratureSimplexGroupFactory(2*restart_order),
+                },
                 mpi_communicator=comm)
             from meshmode.discretization.connection import make_same_mesh_connection
             connection = make_same_mesh_connection(
@@ -1206,14 +1228,26 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     def my_rhs(t, state):
         alpha_field = my_get_alpha(discr, state, alpha_sc)
-        return (
-            ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
-            + make_conserved(
-                dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
-                                   boundary_kwargs={"time": t, "eos": eos},
-                                   alpha=alpha_field, s0=s0_sc, kappa=kappa_sc)
+        return euler_operator(
+            discr,
+            eos,
+            boundaries=boundaries,
+            cv=state,
+            time=t,
+            quad_tag=quad_tag
+        ) + make_conserved(
+            dim,
+            q=av_operator(
+                discr,
+                boundaries,
+                state.join(),
+                alpha_sc,
+                time=t,
+                eos=eos,
+                s0=s0_sc,
+                kappa=kappa_sc,
+                quad_tag=quad_tag
             )
-            + sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
         )
 
     current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,
@@ -1265,6 +1299,8 @@ if __name__ == "__main__":
                         help="enable logging profiling [ON]")
     parser.add_argument("--lazy", action="store_true", default=False,
                         help="enable lazy evaluation [OFF]")
+    parser.add_argument("--overintegration", action="store_true", default=False,
+                        help="enable overintegration [OFF]")
 
     args = parser.parse_args()
 
@@ -1299,6 +1335,7 @@ if __name__ == "__main__":
     print(f"Running {sys.argv[0]}\n")
     main(restart_filename=restart_filename, user_input_file=input_file,
          use_profiling=args.profile, use_logmgr=args.log,
-         actx_class=actx_class)
+         actx_class=actx_class,
+         overintegration=args.overintegration)
 
 # vim: foldmethod=marker
