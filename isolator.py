@@ -1143,8 +1143,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         length_scales = characteristic_lengthscales(actx, discr)
         wavespeed = compute_wavespeed(eos, state)
-        alpha_field = wavespeed*length_scales/order
-        #alpha_field = length_scales/order*delta_u*rho_star
+        alpha_field = alpha*wavespeed*length_scales/order
+        #alpha_field = alpha*length_scales/order*delta_u*rho_star
         #alpha_field = alpha*length_scales/order
 
         return alpha_field
@@ -1222,8 +1222,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     current_step, current_t, current_state = \
         advance_state(rhs=my_rhs, timestepper=timestepper,
                       pre_step_callback=my_pre_step,
-                      post_step_callback=my_post_step, dt=current_dt,
-                      state=current_state, t=current_t, t_final=t_final)
+                      post_step_callback=my_post_step,
+                      istep=current_step, dt=current_dt,
+                      t=current_t, t_final=t_final,
+                      state=current_state)
 
     # Dump the final data
     if rank == 0:
