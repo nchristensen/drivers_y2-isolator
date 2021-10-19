@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # default branch for building mirgecom for this driver
-mirge_branch="y1-production"
+mirge_branch="parallel-lazy"
+mirge_branch2="y1-production"
 # conda environment name
 conda_env="mirgeDriver.Y2isolator"
 
@@ -97,12 +98,12 @@ else
 
   if [ -z ${CONDA_PATH+x} ]; then
     echo "CONDA_PATH unset, installing new conda with emirge"
-    echo "./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=${mirge_branch}"
-    ./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=${mirge_branch}
+    echo "./install.sh --env-name=mirgeDriver.Y2isolator ${git_method} --branch=${mirge_branch}"
+    ./install.sh --env-name=${conda_env} ${git_method} --branch=${mirge_branch}
   else
     echo "Using existing Conda installation, ${CONDA_PATH}"
-    echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}"
-    ./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}
+    echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=${conda_env} ${git_method} --branch=${mirge_branch}"
+    ./install.sh --conda-prefix=$CONDA_PATH --env-name=${conda_env} ${git_method} --branch=${mirge_branch}
   fi
   cd mirgecom
   git pull
