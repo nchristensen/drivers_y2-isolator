@@ -105,3 +105,12 @@ else
     ./install.sh --conda-prefix=$CONDA_PATH --env-name=${conda_env} ${git_method} --branch=${mirge_branch}
   fi
 fi
+
+# add a few packages that are required for our development process
+source config/activate_env.sh
+#conda activate ${conda_env}
+python -m pip install flake8 flake8-quotes pylint
+
+# install the git hooks script to get linting on commits
+cd ..
+cp githooks/pre-commit .git/hooks/pre-commit
