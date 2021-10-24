@@ -9,6 +9,7 @@ usage()
 {
   echo "Usage: $0 [options]"
   echo "  --use-ssh         Use ssh-keys to clone emirge/mirgecom"
+  echo "  --restore-build   Build with previously stored version information for mirgecom and associated packages"
   echo "  --help            Print this help text."
 }
 
@@ -96,18 +97,20 @@ else
 
   if [ -z ${CONDA_PATH+x} ]; then
     echo "CONDA_PATH unset, installing new conda with emirge"
-    echo "./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=${mirge_branch}"
-    ./install.sh --env-name=mirgeDriver.Y2isolator $git_method --branch=${mirge_branch}
+    echo "./install.sh --env-name=${conda_env} ${git_method} --branch=${mirge_branch}"
+    ./install.sh --env-name=${conda_env} ${git_method} --branch=${mirge_branch}
   else
     echo "Using existing Conda installation, ${CONDA_PATH}"
-    echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}"
-    ./install.sh --conda-prefix=$CONDA_PATH --env-name=$conda_env $git_method --branch=${mirge_branch}
+    echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=${conda_env} ${git_method} --branch=${mirge_branch}"
+    ./install.sh --conda-prefix=$CONDA_PATH --env-name=${conda_env} ${git_method} --branch=${mirge_branch}
   fi
-  cd mirgecom
-  git pull
-  git checkout y1-production
-  git checkout parallel-lazy
-  git checkout -b mrgy1
-  git merge y1-production
-  cd ../
 fi
+
+# add a few packages that are required for our development process
+source config/activate_env.sh
+#conda activate ${conda_env}
+python -m pip install flake8 flake8-quotes pylint
+
+# install the git hooks script to get linting on commits
+cd ..
+cp githooks/pre-commit .git/hooks/pre-commit
