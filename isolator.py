@@ -576,7 +576,7 @@ class UniformModified:
 
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None,
-         use_profiling=False, use_logmgr=False, user_input_file=None,
+         use_profiling=False, use_logmgr=True, user_input_file=None,
          actx_class=PyOpenCLArrayContext, casename=None):
     """Drive the Y0 example."""
     cl_ctx = ctx_factory()
@@ -1288,6 +1288,6 @@ if __name__ == "__main__":
     print(f"Running {sys.argv[0]}\n")
     main(restart_filename=restart_filename, user_input_file=input_file,
          use_profiling=args.profile, use_logmgr=args.log,
-         actx_class=actx_class)
+         actx_class=actx_class, casename=casename)
 
 # vim: foldmethod=marker
