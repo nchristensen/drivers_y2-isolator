@@ -13,18 +13,9 @@ export SHELL=$(type -p bash)
 function pvsingle() {
   base="/Users/someguy/work/CEESD/MirgeCom/Drivers/CEESD-Y2_isolator/"
 
-  #prefix="upstream_full"
-  #prefix="N2-injector"
-  #prefix="arc-heater-3d"
   prefix="y2-full"
+  prefix="y2-cavity"
 
-  destination="post-process"
-
-  # Downstream
-  #runName="Downstream/HalfX/VerticalInjection"
-  #runName="Downstream/HalfX/HorizontalInjection"
-  #runName="Downstream/1X/VerticalInjection"
-  #runName="Downstream/1X/HorizontalInjection"
   runName="smoke_test/viz_data"
 
   # Run Paraview
@@ -34,14 +25,12 @@ function pvsingle() {
 }
 export -f pvsingle # So GNU parallel can see it.
 
-echo "sequence=" $(seq $startIter $skipIter $stopIter)
+#echo "sequence=" $(seq $startIter $skipIter $stopIter)
 #parallel -j $numProcs pvsingle ::: $(seq $startIter $skipIter $stopIter)
-#pvsingle ::: $(seq $startIter $skipIter $stopIter)
 #pvsingle 000000
-#for n in {${startIter}..${stopIter}..${skipIter}}
 for n in $( seq ${startIter} ${skipIter} ${stopIter} )
 do
-  echo "pvsingle ${n}"
+  #echo "pvsingle ${n}"
   pvsingle $n;
 done
 
