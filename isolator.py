@@ -58,7 +58,8 @@ from mirgecom.logging_quantities import (
     logmgr_add_cl_device_info,
     logmgr_set_time,
     LogUserQuantity,
-    set_sim_state
+    set_sim_state,
+    allsync
 )
 
 from mirgecom.navierstokes import ns_operator
