@@ -58,8 +58,7 @@ from mirgecom.logging_quantities import (
     logmgr_add_cl_device_info,
     logmgr_set_time,
     LogUserQuantity,
-    set_sim_state,
-    allsync
+    set_sim_state
 )
 
 from mirgecom.navierstokes import ns_operator
@@ -70,7 +69,8 @@ from mirgecom.simutil import (
     write_visfile,
     check_naninf_local,
     check_range_local,
-    get_sim_timestep
+    get_sim_timestep,
+    allsync
 )
 from mirgecom.restart import write_restart_file
 from mirgecom.io import make_init_message
