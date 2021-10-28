@@ -8,5 +8,5 @@ alpha_sc: 0.5
 s0_sc: -5.0
 kappa_sc: 0.5
 integrator: euler
-health_pres_min: 1405.4
-health_pres_max: 275370
+health_pres_min: 10
+health_pres_max: 300000
