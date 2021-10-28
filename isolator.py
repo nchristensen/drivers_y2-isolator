@@ -1319,7 +1319,7 @@ if __name__ == "__main__":
 
     print(f"Running {sys.argv[0]}\n")
     main(restart_filename=restart_filename, user_input_file=input_file,
-         use_profiling=args.profile, use_logmgr=args.log, 
+         use_profiling=args.profile, use_logmgr=args.log,
          actx_class=actx_class, casename=casename,
          log_dependent=log_dependent)
 
