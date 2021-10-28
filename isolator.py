@@ -577,7 +577,7 @@ class UniformModified:
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
-         actx_class=PyOpenCLArrayContext, casename=None):
+         actx_class=PyOpenCLArrayContext, casename=None, log_dependent=1):
     """Drive the Y0 example."""
     cl_ctx = ctx_factory()
 
@@ -918,22 +918,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     if logmgr:
         logmgr_add_cl_device_info(logmgr, queue)
-        logmgr_add_many_discretization_quantities(logmgr, discr, dim,
-                             extract_vars_for_logging, units_for_logging)
-
-        logmgr.add_quantity(log_cfl, interval=nstatus)
 
         logmgr.add_watches([
             ("step.max", "step = {value}, "),
-            ("t_sim.max", "sim time: {value:1.6e} s, "),
-            ("cfl.max", "cfl = {value:1.4f}\n"),
-            ("min_pressure", "------- P (min, max) (Pa) = ({value:1.9e}, "),
-            ("max_pressure", "{value:1.9e})\n"),
-            ("min_temperature", "------- T (min, max) (K)  = ({value:7g}, "),
-            ("max_temperature", "{value:7g})\n"),
+            ("t_sim.max", "sim time: {value:1.6e} s\n"),
             ("t_step.max", "------- step walltime: {value:6g} s, "),
-            ("t_log.max", "log walltime: {value:6g} s")
-        ])
+            ("t_log.max", "log walltime: {value:6g} s\n")])
 
         try:
             logmgr.add_watches(["memory_usage.max"])
@@ -945,6 +935,19 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         vis_timer = IntervalTimer("t_vis", "Time spent visualizing")
         logmgr.add_quantity(vis_timer)
+
+        if log_dependent:
+            logmgr_add_many_discretization_quantities(logmgr, discr, dim,
+                                                      extract_vars_for_logging,
+                                                      units_for_logging)
+
+            logmgr.add_quantity(log_cfl, interval=nstatus)
+            logmgr.add_watches([
+                ("cfl.max", "-------- cfl = {value:1.4f}\n"),
+                ("min_pressure", "------- P (min, max) (Pa) = ({value:1.9e}, "),
+                ("max_pressure", "{value:1.9e})\n"),
+                ("min_temperature", "------- T (min, max) (K)  = ({value:7g}, "),
+                ("max_temperature", "{value:7g})\n")])
 
     if rank == 0:
         logging.info("Before restart/init")
@@ -989,6 +992,21 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                      eosname=eosname, casename=casename)
     if rank == 0:
         logger.info(init_message)
+
+    def my_write_status(dt, cfl, dv=None):
+        status_msg = f"------ {dt=}" if constant_cfl else f"----- {cfl=}"
+        if dv is not None:
+            temp = dv.temperature
+            press = dv.pressure
+            temp = thaw(freeze(temp, actx), actx)
+            press = thaw(freeze(press, actx), actx)
+            from grudge.op import nodal_min_loc, nodal_max_loc
+            tmin = allsync(nodal_min_loc(discr, "vol", temp), comm=comm, op=MPI.MIN)
+            tmax = allsync(nodal_max_loc(discr, "vol", temp), comm=comm, op=MPI.MAX)
+            pmin = allsync(nodal_min_loc(discr, "vol", press), comm=comm, op=MPI.MIN)
+            pmax = allsync(nodal_max_loc(discr, "vol", press), comm=comm, op=MPI.MAX)
+            dv_status_msg = f"\nP({pmin}, {pmax}), T({tmin}, {tmax})"
+            status_msg = status_msg + dv_status_msg
 
     def my_write_viz(step, t, state, dv=None, tagged_cells=None,
                      ts_field=None, alpha_field=None):
@@ -1150,6 +1168,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             do_viz = check_step(step=step, interval=nviz)
             do_restart = check_step(step=step, interval=nrestart)
             do_health = check_step(step=step, interval=nhealth)
+            do_status = check_step(step=step, interval=nstatus)
 
             if do_health:
                 dv = eos.dependent_vars(state)
@@ -1160,6 +1179,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                     if rank == 0:
                         logger.info("Fluid solution failed health check.")
                     raise MyRuntimeError("Failed simulation health check.")
+
+            if do_status and (log_dependent == 0):
+                if dv is None:
+                    dv = eos.dependent_vars(state)
+                my_write_status(dt=dt, cfl=cfl, dv=dv)
 
             if do_restart:
                 my_write_restart(step=step, t=t, state=state)
@@ -1221,6 +1245,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     alpha_field = my_get_alpha(discr, current_state, alpha_sc)
     ts_field, cfl, dt = my_get_timestep(t=current_t, dt=current_dt,
                                         state=current_state, alpha=alpha_field)
+    if log_dependent == 0:
+        my_write_status(dt=dt, cfl=cfl, dv=final_dv)
+
     my_write_viz(step=current_step, t=current_t, state=current_state, dv=final_dv,
                  ts_field=ts_field, alpha_field=alpha_field)
     my_write_restart(step=current_step, t=current_t, state=current_state)
@@ -1250,7 +1277,7 @@ if __name__ == "__main__":
                         action="store", help="simulation case name")
     parser.add_argument("--profile", action="store_true", default=False,
                         help="enable kernel profiling [OFF]")
-    parser.add_argument("--log", action="store_true", default=True,
+    parser.add_argument("--log", action="store_true", default=False,
                         help="enable logging profiling [ON]")
     parser.add_argument("--lazy", action="store_true", default=False,
                         help="enable lazy evaluation [OFF]")
@@ -1265,13 +1292,17 @@ if __name__ == "__main__":
     else:
         print(f"Default casename {casename}")
 
+    log_dependent = 1
     if args.profile:
         if args.lazy:
             raise ValueError("Can't use lazy and profiling together.")
         actx_class = PyOpenCLProfilingArrayContext
     else:
-        actx_class = PytatoPyOpenCLArrayContext if args.lazy \
-            else PyOpenCLArrayContext
+        if args.lazy:
+            actx_class = PytatoPyOpenCLArrayContext
+            log_dependent = 0
+        else:
+            actx_class = PyOpenCLArrayContext
 
     restart_filename = None
     if args.restart_file:
@@ -1287,7 +1318,8 @@ if __name__ == "__main__":
 
     print(f"Running {sys.argv[0]}\n")
     main(restart_filename=restart_filename, user_input_file=input_file,
-         use_profiling=args.profile, use_logmgr=args.log,
-         actx_class=actx_class, casename=casename)
+         use_profiling=args.profile, use_logmgr=args.log, 
+         actx_class=actx_class, casename=casename,
+         log_dependent=log_dependent)
 
 # vim: foldmethod=marker
