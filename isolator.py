@@ -1055,8 +1055,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                      health_pres_min, health_pres_max),
                                      comm, op=MPI.LOR):
             health_error = True
-            p_min = nodal_min(discr, "vol", dv.pressure)
-            p_max = nodal_max(discr, "vol", dv.pressure)
+            p_min = actx.to_numpy(nodal_min(discr, "vol", dv.pressure))
+            p_max = actx.to_numpy(nodal_max(discr, "vol", dv.pressure))
             logger.info(f"Pressure range violation ({p_min=}, {p_max=})")
 
         return health_error
@@ -1131,13 +1131,13 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             ts_field = current_cfl * my_get_viscous_timestep(discr, eos=eos,
                                                              cv=state, alpha=alpha)
             from grudge.op import nodal_min
-            dt = nodal_min(discr, "vol", ts_field)
+            dt = actx.to_numpy(nodal_min(discr, "vol", ts_field))
             cfl = current_cfl
         else:
             ts_field = my_get_viscous_cfl(discr, eos=eos, dt=dt,
                                           cv=state, alpha=alpha)
             from grudge.op import nodal_max
-            cfl = nodal_max(discr, "vol", ts_field)
+            cfl = actx.to_numpy(nodal_max(discr, "vol", ts_field))
 
         return ts_field, cfl, min(t_remaining, dt)
 

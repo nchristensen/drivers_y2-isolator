@@ -3,13 +3,13 @@ nrestart: 10
 nhealth: 1
 nstatus: 1
 current_dt: 1.0e-9
-t_final: 1.e-8
+t_final: 2.e-8
 order:  2
 alpha_sc: 0.01
 s0_sc: -5.0
 kappa_sc: 0.5
 integrator: euler
-health_pres_min: 2778.4
-health_pres_max: 276041
+health_pres_min: 2728
+health_pres_max: 277539
 #health_pres_min: 10
 #health_pres_max: 300000
