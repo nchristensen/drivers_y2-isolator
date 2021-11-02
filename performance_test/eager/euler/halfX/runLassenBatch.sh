@@ -2,8 +2,8 @@
 #BSUB -nnodes 1
 #BSUB -G uiuc
 #BSUB -W 60
-#BSUB -J iso_smoke
-#BSUB -q pdebug
+#BSUB -J perf_halfX
+#BSUB -q pbatch
 #BSUB -o runOutput.txt
 #BSUB -e runOutput.txt
 
