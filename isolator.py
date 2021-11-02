@@ -578,7 +578,7 @@ class UniformModified:
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
-         actx_class=PyOpenCLArrayContext, casename=None, log_dependent=1):
+         actx_class=PyOpenCLArrayContext, casename=None):
     """Drive the Y0 example."""
     cl_ctx = ctx_factory()
 
@@ -614,6 +614,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     nhealth = 1
     nrestart = 5000
     nstatus = 1
+    log_dependent = 0
 
     # default timestepping control
     integrator = "rk4"
@@ -654,6 +655,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             pass
         try:
             nstatus = int(input_data["nstatus"])
+        except KeyError:
+            pass
+        try:
+            log_dependent = int(input_data["log_dependent"])
         except KeyError:
             pass
         try:
@@ -714,6 +719,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         print(f"\tt_final = {t_final}")
         print(f"\torder = {order}")
         print(f"\tTime integration {integrator}")
+        if log_dependent:
+            print("\tDependent variable logging is ON.")
+        else:
+            print("\tDependent variable logging is OFF.")
         print("#### Simluation control data: ####")
 
     timestepper = rk4_step
@@ -919,10 +928,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     if logmgr:
         logmgr_add_cl_device_info(logmgr, queue)
+        logmgr.add_quantity(log_cfl, interval=nstatus)
 
         logmgr.add_watches([
             ("step.max", "step = {value}, "),
-            ("t_sim.max", "sim time: {value:1.6e} s\n"),
+            ("t_sim.max", "sim time: {value:1.6e} s, "),
+            ("cfl.max", "cfl = {value:1.4f}\n"),
             ("t_step.max", "------- step walltime: {value:6g} s, "),
             ("t_log.max", "log walltime: {value:6g} s\n")])
 
@@ -941,14 +952,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             logmgr_add_many_discretization_quantities(logmgr, discr, dim,
                                                       extract_vars_for_logging,
                                                       units_for_logging)
-
-            logmgr.add_quantity(log_cfl, interval=nstatus)
-            logmgr.add_watches([
-                ("cfl.max", "-------- cfl = {value:1.4f}\n"),
-                ("min_pressure", "------- P (min, max) (Pa) = ({value:1.9e}, "),
-                ("max_pressure", "{value:1.9e})\n"),
-                ("min_temperature", "------- T (min, max) (K)  = ({value:7g}, "),
-                ("max_temperature", "{value:7g})\n")])
 
     if rank == 0:
         logging.info("Before restart/init")
@@ -1301,7 +1304,6 @@ if __name__ == "__main__":
     else:
         print(f"Default casename {casename}")
 
-    log_dependent = 1
     if args.profile:
         if args.lazy:
             raise ValueError("Can't use lazy and profiling together.")
@@ -1309,7 +1311,6 @@ if __name__ == "__main__":
     else:
         if args.lazy:
             actx_class = PytatoPyOpenCLArrayContext
-            log_dependent = 0
         else:
             actx_class = PyOpenCLArrayContext
 
@@ -1328,7 +1329,6 @@ if __name__ == "__main__":
     print(f"Running {sys.argv[0]}\n")
     main(restart_filename=restart_filename, user_input_file=input_file,
          use_profiling=args.profile, use_logmgr=args.log,
-         actx_class=actx_class, casename=casename,
-         log_dependent=log_dependent)
+         actx_class=actx_class, casename=casename)
 
 # vim: foldmethod=marker
