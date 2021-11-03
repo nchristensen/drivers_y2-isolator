@@ -36,6 +36,7 @@ import numpy.linalg as la  # noqa
 import pyopencl.array as cla  # noqa
 import math
 from pytools.obj_array import make_obj_array
+from functools import partial
 
 
 from meshmode.array_context import (
@@ -44,7 +45,7 @@ from meshmode.array_context import (
     #PytatoPyOpenCLArrayContext
 )
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
-from arraycontext import thaw, freeze
+from arraycontext import thaw, freeze, flatten, unflatten, to_numpy, from_numpy
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
 from grudge.shortcuts import make_visualizer
@@ -69,8 +70,7 @@ from mirgecom.simutil import (
     write_visfile,
     check_naninf_local,
     check_range_local,
-    get_sim_timestep,
-    allsync
+    get_sim_timestep
 )
 from mirgecom.restart import write_restart_file
 from mirgecom.io import make_init_message
@@ -332,9 +332,8 @@ class InitACTII:
         ytop = 0*x_vec[0]
         actx = xpos.array_context
 
-        from meshmode.dof_array import flatten_to_numpy
-        xpos_flat = flatten_to_numpy(actx, xpos)
-        ypos_flat = flatten_to_numpy(actx, ypos)
+        xpos_flat = to_numpy(flatten(xpos, actx), actx)
+        ypos_flat = to_numpy(flatten(ypos, actx), actx)
         gamma = eos.gamma()
         gas_const = eos.gas_const()
 
@@ -375,12 +374,10 @@ class InitACTII:
             else:
                 mach_flat[inode] = 1.0
 
-        from meshmode.dof_array import unflatten_from_numpy
-        ytop = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), ytop_flat)
-        ybottom = unflatten_from_numpy(actx, discr.discr_from_dd("vol"),
-                                       ybottom_flat)
-        mach = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), mach_flat)
-        theta = unflatten_from_numpy(actx, discr.discr_from_dd("vol"), theta_flat)
+        ytop = unflatten(xpos, from_numpy(ytop_flat, actx), actx)
+        ybottom = unflatten(xpos, from_numpy(ybottom_flat, actx), actx)
+        mach = unflatten(xpos, from_numpy(mach_flat, actx), actx)
+        theta = unflatten(xpos, from_numpy(theta_flat, actx), actx)
 
         pressure = getIsentropicPressure(
             mach=mach,
@@ -587,6 +584,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     rank = comm.Get_rank()
     nparts = comm.Get_size()
 
+    from mirgecom.simutil import global_reduce as _global_reduce
+    global_reduce = partial(_global_reduce, comm=comm)
+
     if casename is None:
         casename = "mirgecom"
 
@@ -721,6 +721,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         print(f"\tTime integration {integrator}")
         if log_dependent:
             print("\tDependent variable logging is ON.")
+            print("\tWARNING: This may be a performance drag in lazy mode")
         else:
             print("\tDependent variable logging is OFF.")
         print("#### Simluation control data: ####")
@@ -928,14 +929,13 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     if logmgr:
         logmgr_add_cl_device_info(logmgr, queue)
-        logmgr.add_quantity(log_cfl, interval=nstatus)
 
         logmgr.add_watches([
             ("step.max", "step = {value}, "),
             ("t_sim.max", "sim time: {value:1.6e} s, "),
-            ("cfl.max", "cfl = {value:1.4f}\n"),
-            ("t_step.max", "------- step walltime: {value:6g} s, "),
-            ("t_log.max", "log walltime: {value:6g} s\n")])
+            ("t_step.max", "step walltime: {value:6g} s")
+            #("t_log.max", "log walltime: {value:6g} s")
+        ])
 
         try:
             logmgr.add_watches(["memory_usage.max"])
@@ -952,6 +952,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             logmgr_add_many_discretization_quantities(logmgr, discr, dim,
                                                       extract_vars_for_logging,
                                                       units_for_logging)
+
+            logmgr.add_quantity(log_cfl, interval=nstatus)
+            logmgr.add_watches([
+                ("cfl.max", ", cfl = {value:1.4f}\n"),
+                ("min_pressure", "------- P (min, max) (Pa) = ({value:1.9e}, "),
+                ("max_pressure", "{value:1.9e})\n"),
+                ("min_temperature", "------- T (min, max) (K)  = ({value:7g}, "),
+                ("max_temperature", "{value:7g})\n")])
 
     if rank == 0:
         logging.info("Before restart/init")
@@ -998,27 +1006,31 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         logger.info(init_message)
 
     def my_write_status(dt, cfl, dv=None):
-        status_msg = f"------ {dt=}" if constant_cfl else f"----- {cfl=}"
+        status_msg = f"-------- dt = {dt:1.3e}, cfl = {cfl:1.4f}"
         if dv is not None:
             temp = dv.temperature
-            press = dv.pressure
+            pres = dv.pressure
             temp = thaw(freeze(temp, actx), actx)
-            press = thaw(freeze(press, actx), actx)
+            pres = thaw(freeze(pres, actx), actx)
             from grudge.op import nodal_min_loc, nodal_max_loc
-            tmin = allsync(
-                actx.to_numpy(nodal_min_loc(discr, "vol", temp)),
-                comm=comm, op=MPI.MIN)
-            tmax = allsync(
-                actx.to_numpy(nodal_max_loc(discr, "vol", temp)),
-                comm=comm, op=MPI.MAX)
-            pmin = allsync(
-                actx.to_numpy(nodal_min_loc(discr, "vol", press)),
-                comm=comm, op=MPI.MIN)
-            pmax = allsync(
-                actx.to_numpy(nodal_max_loc(discr, "vol", press)),
-                comm=comm, op=MPI.MAX)
-            dv_status_msg = f"\nP({pmin}, {pmax}), T({tmin}, {tmax})"
-            status_msg = status_msg + dv_status_msg
+            pmin = global_reduce(
+                actx.to_numpy(nodal_min_loc(discr, "vol", pres)), op="min")
+            pmax = global_reduce(
+                actx.to_numpy(nodal_max_loc(discr, "vol", pres)), op="max")
+            dv_status_msg = (
+                f"\n-------- P (min, max) (Pa) = ({pmin:1.9e}, {pmax:1.9e})")
+            tmin = global_reduce(
+                actx.to_numpy(nodal_min_loc(discr, "vol", temp)), op="min")
+            tmax = global_reduce(
+                actx.to_numpy(nodal_max_loc(discr, "vol", temp)), op="max")
+            dv_status_msg += (
+                f"\n-------- T (min, max) (K)  = ({tmin:7g}, {tmax:7g})")
+            status_msg += dv_status_msg
+
+        status_msg += "\n"
+
+        if rank == 0:
+            logger.info(status_msg)
 
     def my_write_viz(step, t, state, dv=None, tagged_cells=None,
                      ts_field=None, alpha_field=None):
@@ -1061,10 +1073,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             health_error = True
             logger.info(f"{rank=}: NANs/Infs in pressure data.")
 
-        from mirgecom.simutil import allsync
-        if allsync(check_range_local(discr, "vol", dv.pressure,
+        if global_reduce(check_range_local(discr, "vol", dv.pressure,
                                      health_pres_min, health_pres_max),
-                                     comm, op=MPI.LOR):
+                                     op="lor"):
             health_error = True
             p_min = actx.to_numpy(nodal_min(discr, "vol", dv.pressure))
             p_max = actx.to_numpy(nodal_max(discr, "vol", dv.pressure))
@@ -1175,7 +1186,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
             alpha_field = my_get_alpha(discr, state, alpha_sc)
             ts_field, cfl, dt = my_get_timestep(t, dt, state, alpha_field)
-            log_cfl.set_quantity(cfl)
+            if log_dependent:
+                log_cfl.set_quantity(cfl)
 
             do_viz = check_step(step=step, interval=nviz)
             do_restart = check_step(step=step, interval=nrestart)
@@ -1184,9 +1196,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
             if do_health:
                 dv = eos.dependent_vars(state)
-                from mirgecom.simutil import allsync
-                health_errors = allsync(my_health_check(dv), comm,
-                                        op=MPI.LOR)
+                health_errors = global_reduce(my_health_check(dv), op="lor")
                 if health_errors:
                     if rank == 0:
                         logger.info("Fluid solution failed health check.")
@@ -1257,8 +1267,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     alpha_field = my_get_alpha(discr, current_state, alpha_sc)
     ts_field, cfl, dt = my_get_timestep(t=current_t, dt=current_dt,
                                         state=current_state, alpha=alpha_field)
-    if log_dependent == 0:
-        my_write_status(dt=dt, cfl=cfl, dv=final_dv)
+    my_write_status(dt=dt, cfl=cfl, dv=final_dv)
 
     my_write_viz(step=current_step, t=current_t, state=current_state, dv=final_dv,
                  ts_field=ts_field, alpha_field=alpha_field)
