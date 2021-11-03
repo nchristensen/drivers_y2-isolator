@@ -1237,7 +1237,23 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             logmgr.tick_after()
         return state, dt
 
-    def my_rhs(t, state):
+    def my_rhs(t, state, alpha):
+        return (
+            ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
+            + make_conserved(
+                dim, q=av_operator(discr, q=state.join(), boundaries=boundaries,
+                                   boundary_kwargs={"time": t, "eos": eos},
+                                   alpha=alpha, s0=s0_sc, kappa=kappa_sc)
+            )
+            + sponge(cv=state, cv_ref=ref_state, sigma=sponge_sigma)
+        )
+    #compiled_rhs = actx.compile(my_rhs)
+
+    def my_rhs_wrap(t, state):
+        alpha_field = my_get_alpha(discr, state, alpha_sc)
+        return my_rhs(t, state, alpha_field)
+
+    def my_rhs_orig(t, state):
         alpha_field = my_get_alpha(discr, state, alpha_sc)
         return (
             ns_operator(discr, cv=state, t=t, boundaries=boundaries, eos=eos)
@@ -1253,7 +1269,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                   current_cfl, eos, t_final, constant_cfl)
 
     current_step, current_t, current_state = \
-        advance_state(rhs=my_rhs, timestepper=timestepper,
+        advance_state(rhs=my_rhs_wrap, timestepper=timestepper,
                       pre_step_callback=my_pre_step,
                       post_step_callback=my_post_step,
                       istep=current_step, dt=current_dt,
