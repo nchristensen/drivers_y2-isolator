@@ -29,6 +29,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 import logging
+import sys
 import yaml
 import numpy as np
 import pyopencl as cl
@@ -91,7 +92,37 @@ from mirgecom.boundary import (
 from mirgecom.eos import IdealSingleGas
 from mirgecom.transport import SimpleTransport
 
+
+class SingleLevelFilter(logging.Filter):
+    def __init__(self, passlevel, reject):
+        self.passlevel = passlevel
+        self.reject = reject
+
+    def filter(self, record):
+        if self.reject:
+            return (record.levelno != self.passlevel)
+        else:
+            return (record.levelno == self.passlevel)
+
+
+h1 = logging.StreamHandler(sys.stdout)
+f1 = SingleLevelFilter(logging.INFO, False)
+h1.addFilter(f1)
+root_logger = logging.getLogger()
+root_logger.addHandler(h1)
+h2 = logging.StreamHandler(sys.stderr)
+f2 = SingleLevelFilter(logging.INFO, True)
+h2.addFilter(f2)
+root_logger.addHandler(h2)
+
 logger = logging.getLogger(__name__)
+#logger = logging.getLogger("my.logger")
+logger.setLevel(logging.DEBUG)
+#logger.debug("A DEBUG message")
+#logger.info("An INFO message")
+#logger.warning("A WARNING message")
+#logger.error("An ERROR message")
+#logger.critical("A CRITICAL message")
 
 
 class MyRuntimeError(RuntimeError):
@@ -706,11 +737,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     s0_sc = np.log10(1.0e-4 / np.power(order, 4))
     if rank == 0:
-        print(f"\tShock capturing parameters: alpha {alpha_sc}, "
+        print(f"Shock capturing parameters: alpha {alpha_sc}, "
               f"s0 {s0_sc}, kappa {kappa_sc}")
 
     if rank == 0:
-        print("#### Simluation control data: ####")
+        print("\n#### Simluation control data: ####")
         print(f"\tnviz = {nviz}")
         print(f"\tnrestart = {nrestart}")
         print(f"\tnhealth = {nhealth}")
@@ -724,7 +755,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             print("\tWARNING: This may be a performance drag in lazy mode")
         else:
             print("\tDependent variable logging is OFF.")
-        print("#### Simluation control data: ####")
+        print("#### Simluation control data: ####\n")
 
     timestepper = rk4_step
     if integrator == "euler":
@@ -792,11 +823,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     vel_inflow[0] = inlet_mach*math.sqrt(gamma*pres_inflow/rho_inflow)
 
     if rank == 0:
-        print(f"inlet Mach number {inlet_mach}")
-        print(f"inlet temperature {temp_inflow}")
-        print(f"inlet pressure {pres_inflow}")
-        print(f"inlet rho {rho_inflow}")
-        print(f"inlet velocity {vel_inflow[0]}")
+        print("#### Simluation initialization data: ####")
+        print(f"\tinlet Mach number {inlet_mach}")
+        print(f"\tinlet temperature {temp_inflow}")
+        print(f"\tinlet pressure {pres_inflow}")
+        print(f"\tinlet rho {rho_inflow}")
+        print(f"\tinlet velocity {vel_inflow[0]}")
         #print(f"final inlet pressure {pres_inflow_final}")
 
     outlet_mach = getMachFromAreaRatio(area_ratio=outlet_area_ratio,
@@ -812,11 +844,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     vel_outflow[0] = outlet_mach*math.sqrt(gamma*pres_outflow/rho_outflow)
 
     if rank == 0:
-        print(f"outlet Mach number {outlet_mach}")
-        print(f"outlet temperature {temp_outflow}")
-        print(f"outlet pressure {pres_outflow}")
-        print(f"outlet rho {rho_outflow}")
-        print(f"outlet velocity {vel_outflow[0]}")
+        print(f"\toutlet Mach number {outlet_mach}")
+        print(f"\toutlet temperature {temp_outflow}")
+        print(f"\toutlet pressure {pres_outflow}")
+        print(f"\toutlet rho {rho_outflow}")
+        print(f"\toutlet velocity {vel_outflow[0]}")
+        print("#### Simluation initialization data: ####\n")
 
     eos = IdealSingleGas(
         gamma=gamma, gas_const=r, transport_model=transport_model
@@ -1202,7 +1235,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                 health_errors = global_reduce(my_health_check(dv), op="lor")
                 if health_errors:
                     if rank == 0:
-                        logger.info("Fluid solution failed health check.")
+                        logger.warning("Fluid solution failed health check.")
                     raise MyRuntimeError("Failed simulation health check.")
 
             if do_status and (log_dependent == 0):
@@ -1221,7 +1254,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         except MyRuntimeError:
             if rank == 0:
-                logger.info("Errors detected; attempting graceful exit.")
+                logger.error("Errors detected; attempting graceful exit.")
             my_write_viz(step=step, t=t, state=state)
             my_write_restart(step=step, t=t, state=state)
             raise
