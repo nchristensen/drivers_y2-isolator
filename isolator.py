@@ -75,7 +75,11 @@ from mirgecom.simutil import (
 )
 from mirgecom.restart import write_restart_file
 from mirgecom.io import make_init_message
-from mirgecom.mpi import mpi_entry_point
+from mirgecom.mpi import (
+    MPILikeDistributedContext,
+    NoMPIDistributedContext,
+    mpi_entry_point
+)
 import pyopencl.tools as cl_tools
 from mirgecom.integrators import (rk4_step, lsrk54_step, lsrk144_step,
                                   euler_step)
@@ -603,27 +607,26 @@ class UniformModified:
                               momentum=mom, species_mass=specmass)
 
 
-@mpi_entry_point
-def main(ctx_factory=cl.create_some_context, restart_filename=None,
-         use_profiling=False, use_logmgr=True, user_input_file=None,
-         actx_class=PyOpenCLArrayContext, casename=None):
-    """Drive the Y0 example."""
+def main(ctx_factory=cl.create_some_context, dist_ctx=None, use_logmgr=True,
+         use_profiling=False, user_input_file=None, casename=None,
+         restart_filename=None, actx_class=PyOpenCLArrayContext):
+    """Y2-Isolator driver"""
     cl_ctx = ctx_factory()
 
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    nparts = comm.Get_size()
+    if casename is None:
+        casename = "y2-isolator"
+
+    if dist_ctx is None:
+        dist_ctx = NoMPIDistributedContext()
+    assert isinstance(dist_ctx, MPILikeDistributedContext)
+    rank = dist_ctx.rank   # logging and profiling
+    nparts = dist_ctx.size
 
     from mirgecom.simutil import global_reduce as _global_reduce
-    global_reduce = partial(_global_reduce, comm=comm)
-
-    if casename is None:
-        casename = "mirgecom"
-
-    # logging and profiling
+    global_reduce = partial(_global_reduce, comm=dist_ctx.comm)
+    
     logmgr = initialize_logmgr(use_logmgr,
-        filename=f"{casename}.sqlite", mode="wo", mpi_comm=comm)
+        filename=f"{casename}.sqlite", mode="wo", mpi_comm=dist_ctx.comm)
 
     if use_profiling:
         queue = cl.CommandQueue(cl_ctx,
@@ -671,7 +674,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         if rank == 0:
             with open(user_input_file) as f:
                 input_data = yaml.load(f, Loader=yaml.FullLoader)
-        input_data = comm.bcast(input_data, root=0)
+        input_data = dist_ctx.comm.bcast(input_data, root=0)
         try:
             nviz = int(input_data["nviz"])
         except KeyError:
@@ -862,8 +865,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         from numpy import loadtxt
         geometry_bottom = loadtxt("nozzleBottom.dat", comments="#", unpack=False)
         geometry_top = loadtxt("nozzleTop.dat", comments="#", unpack=False)
-    geometry_bottom = comm.bcast(geometry_bottom, root=0)
-    geometry_top = comm.bcast(geometry_top, root=0)
+    geometry_bottom = dist_ctx.comm.bcast(geometry_bottom, root=0)
+    geometry_top = dist_ctx.comm.bcast(geometry_top, root=0)
 
     # parameters to adjust the shape of the initialization
     vel_sigma = 2000
@@ -933,14 +936,15 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         assert restart_data["nparts"] == nparts
     else:  # generate the grid from scratch
-        local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh)
+        local_mesh, global_nelements = \
+              generate_and_distribute_mesh(dist_ctx.comm, get_mesh)
         local_nelements = local_mesh.nelements
 
     if rank == 0:
         logging.info("Making discretization")
 
     discr = EagerDGDiscretization(
-        actx, local_mesh, order=order, mpi_communicator=comm
+        actx, local_mesh, order=order, mpi_communicator=dist_ctx.comm
     )
     if rank == 0:
         logging.info("Done making discretization")
@@ -1006,7 +1010,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                 actx,
                 local_mesh,
                 order=restart_order,
-                mpi_communicator=comm)
+                mpi_communicator=dist_ctx.comm)
             from meshmode.discretization.connection import make_same_mesh_connection
             connection = make_same_mesh_connection(
                 actx,
@@ -1098,7 +1102,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                 "global_nelements": global_nelements,
                 "num_parts": nparts
             }
-            write_restart_file(actx, restart_data, restart_fname, comm)
+            write_restart_file(actx, restart_data, restart_fname, dist_ctx.comm)
 
     def my_health_check(dv):
         health_error = False
@@ -1326,6 +1330,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(
         description="MIRGE-Com Isentropic Nozzle Driver")
+    parser.add_argument("--mpi", action="store_true", help="run with MPI"),
     parser.add_argument("-r", "--restart_file", type=ascii, dest="restart_file",
                         nargs="?", action="store", help="simulation restart file")
     parser.add_argument("-i", "--input_file", type=ascii, dest="input_file",
@@ -1371,9 +1376,13 @@ if __name__ == "__main__":
     else:
         print("No user input file, using default values")
 
-    print(f"Running {sys.argv[0]}\n")
-    main(restart_filename=restart_filename, user_input_file=input_file,
-         use_profiling=args.profile, use_logmgr=args.log,
-         actx_class=actx_class, casename=casename)
+    if args.mpi:
+        main_func = mpi_entry_point(main)
+    else:
+        main_func = main   print(f"Running {sys.argv[0]}\n")
+
+    main_func(restart_filename=restart_filename, user_input_file=input_file,
+              use_profiling=args.profile, use_logmgr=args.log,
+              actx_class=actx_class, casename=casename)
 
 # vim: foldmethod=marker
