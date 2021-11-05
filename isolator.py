@@ -624,7 +624,7 @@ def main(ctx_factory=cl.create_some_context, dist_ctx=None, use_logmgr=True,
 
     from mirgecom.simutil import global_reduce as _global_reduce
     global_reduce = partial(_global_reduce, comm=dist_ctx.comm)
-    
+
     logmgr = initialize_logmgr(use_logmgr,
         filename=f"{casename}.sqlite", mode="wo", mpi_comm=dist_ctx.comm)
 
