@@ -97,13 +97,15 @@ else
   cd emirge
 
   if [ -z ${CONDA_PATH+x} ]; then
-    echo "CONDA_PATH unset, installing new conda with emirge"
-    echo "./install.sh --env-name=${conda_env} ${git_method} --branch=${mirge_branch}"
-    ./install.sh --env-name=${conda_env} ${git_method} --fork=${mirge_fork} --branch=${mirge_branch}
+      echo "CONDA_PATH unset, installing new conda with emirge"
+      set -x
+      ./install.sh --env-name=${conda_env} ${git_method} --fork=${mirge_fork} --branch=${mirge_branch}
+      set +x
   else
     echo "Using existing Conda installation, ${CONDA_PATH}"
-    echo "./install.sh --conda-prefix=$CONDA_PATH --env-name=${conda_env} ${git_method} --branch=${mirge_branch}"
+    set -x
     ./install.sh --conda-prefix=$CONDA_PATH --env-name=${conda_env} ${git_method} --fork=${mirge_fork} --branch=${mirge_branch}
+    set +x
   fi
 fi
 
