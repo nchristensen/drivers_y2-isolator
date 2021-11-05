@@ -522,51 +522,14 @@ Curve Loop(1) = {
 -1001 // bottom wall
 };
 
-////Create lineloop of this geometry
-//// start on the bottom left and go around clockwise
-//Curve Loop(1) = {
-//-1001,
-//-450,
-//-451,
-//-452,
-//-453,
-//-454,
-//-455,
-//-456,
-//-457,
-//1000,
-//-423
-//};
-
-// old from wyatt
-//Line Loop(1) = {
-////1:211,
-//1000,
-//-1001,
-//-423,
-////-458,
-////-459,
-//-450,
-//-451,
-//-452,
-//-453,
-//-454,
-//-455,
-//-456,
-//457
-//};
-
 Plane Surface(1) = {1};
 
 Physical Surface('domain') = {1};
 
 Physical Curve('inflow') = {-423};
-//Physical Curve('inflow') = {458,459};
 Physical Curve('outflow') = {456};
 Physical Curve('wall') = {
-//1:211,
 1000,
-//213:422,
 1001,
 450,
 451,
@@ -581,10 +544,6 @@ Physical Curve('wall') = {
 Field[1] = Distance;
 Field[1].CurvesList = {1000,1001,450,454,455,457};
 Field[1].NumPointsPerCurve = 100000;
-
-// transfer the distance into something that goes from 
-//Field[50] = MathEval;
-//Field[50].F = Sprintf("F4^3 + %g", lc / 100);
 
 //Create threshold field that varrries element size near boundaries
 Field[2] = Threshold;
@@ -654,7 +613,7 @@ Field[6].VOut = bigsize;
 
 // take the minimum of all defined meshing fields
 Field[100] = Min;
-Field[100].FieldsList = {2, 3, 4, 5, 6};
+Field[100].FieldsList = {2, 3, 4, 5, 6, 12};
 Background Field = 100;
 
 Mesh.MeshSizeExtendFromBoundary = 0;
