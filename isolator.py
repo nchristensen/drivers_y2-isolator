@@ -1107,15 +1107,15 @@ def main(ctx_factory=cl.create_some_context, dist_ctx=None, use_logmgr=True,
             write_restart_file(actx, restart_data, restart_fname, dist_ctx.comm)
 
     def my_health_check(dv):
-        health_error = False
+        health_error = 0
         if check_naninf_local(discr, "vol", dv.pressure):
-            health_error = True
+            health_error = 1
             logger.info(f"{rank=}: NANs/Infs in pressure data.")
 
         if global_reduce(check_range_local(discr, "vol", dv.pressure,
                                      health_pres_min, health_pres_max),
                                      op="lor"):
-            health_error = True
+            health_error = 1
             p_min = actx.to_numpy(nodal_min(discr, "vol", dv.pressure))
             p_max = actx.to_numpy(nodal_max(discr, "vol", dv.pressure))
             logger.info(f"Pressure range violation ({p_min=}, {p_max=})")
@@ -1238,7 +1238,7 @@ def main(ctx_factory=cl.create_some_context, dist_ctx=None, use_logmgr=True,
 
             if do_health:
                 dv = eos.dependent_vars(state)
-                health_errors = global_reduce(my_health_check(dv), op="lor")
+                health_errors = global_reduce(my_health_check(dv), op="max")
                 if health_errors:
                     if rank == 0:
                         logger.warning("Fluid solution failed health check.")
