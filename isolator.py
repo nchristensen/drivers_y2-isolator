@@ -674,7 +674,8 @@ def main(ctx_factory=cl.create_some_context, dist_ctx=None, use_logmgr=True,
         if rank == 0:
             with open(user_input_file) as f:
                 input_data = yaml.load(f, Loader=yaml.FullLoader)
-        input_data = dist_ctx.comm.bcast(input_data, root=0)
+        if nparts > 1:
+            input_data = dist_ctx.comm.bcast(input_data, root=0)
         try:
             nviz = int(input_data["nviz"])
         except KeyError:
@@ -865,8 +866,9 @@ def main(ctx_factory=cl.create_some_context, dist_ctx=None, use_logmgr=True,
         from numpy import loadtxt
         geometry_bottom = loadtxt("nozzleBottom.dat", comments="#", unpack=False)
         geometry_top = loadtxt("nozzleTop.dat", comments="#", unpack=False)
-    geometry_bottom = dist_ctx.comm.bcast(geometry_bottom, root=0)
-    geometry_top = dist_ctx.comm.bcast(geometry_top, root=0)
+    if nparts > 1:
+        geometry_bottom = dist_ctx.comm.bcast(geometry_bottom, root=0)
+        geometry_top = dist_ctx.comm.bcast(geometry_top, root=0)
 
     # parameters to adjust the shape of the initialization
     vel_sigma = 2000
