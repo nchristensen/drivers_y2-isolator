@@ -1379,7 +1379,8 @@ if __name__ == "__main__":
     if args.mpi:
         main_func = mpi_entry_point(main)
     else:
-        main_func = main   print(f"Running {sys.argv[0]}\n")
+        main_func = main
+        print(f"Running {sys.argv[0]}\n")
 
     main_func(restart_filename=restart_filename, user_input_file=input_file,
               use_profiling=args.profile, use_logmgr=args.log,
