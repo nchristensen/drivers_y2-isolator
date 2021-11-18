@@ -90,6 +90,11 @@ from mirgecom.boundary import (
 #from mirgecom.initializers import (Uniform, PlanarDiscontinuity)
 from mirgecom.eos import IdealSingleGas
 from mirgecom.transport import SimpleTransport
+from arraycontext.impl.pytato.utils import to_tagged_cl_array
+from arraycontext.container.traversal import (rec_map_array_container,
+                                              rec_keyed_map_array_container)
+from meshmode.transform_metadata import (DiscretizationElementAxisTag,
+                                         DiscretizationDOFAxisTag)
 
 
 class SingleLevelFilter(logging.Filter):
@@ -954,7 +959,25 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     sponge_sigma = sponge_init(x_vec=thaw(discr.nodes(), actx))
     ref_state = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx),
                           eos=eos, time=0)
-    ref_state = thaw(freeze(ref_state, init_actx), actx)
+    ref_state = thaw(
+        rec_map_array_container(
+            lambda x: to_tagged_cl_array(x,
+                                         axes=None,
+                                         tags=frozenset()),
+            freeze(ref_state, init_actx)),
+        actx)
+    ref_state = rec_keyed_map_array_container(
+        lambda key, x: actx.tag_axis(
+            0,
+            DiscretizationElementAxisTag.from_group(discr
+                                                    .discr_from_dd("vol")
+                                                    .groups[key[-1]]),
+            actx.tag_axis(1,
+                          DiscretizationDOFAxisTag.from_group(discr
+                                                              .discr_from_dd("vol")
+                                                              .groups[key[-1]]),
+                          x)),
+        ref_state)
 
     vis_timer = None
     log_cfl = LogUserQuantity(name="cfl", value=current_cfl)
@@ -1022,7 +1045,26 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             logging.info("Initializing soln.")
         current_state = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx),
                                   eos=eos, time=0)
-        current_state = thaw(freeze(current_state, init_actx), actx)
+        current_state = thaw(
+            rec_map_array_container(
+                lambda x: to_tagged_cl_array(x,
+                                             axes=None,
+                                             tags=frozenset()),
+                freeze(current_state, init_actx)),
+            actx)
+
+        current_state = rec_keyed_map_array_container(
+            lambda key, x: actx.tag_axis(
+                0,
+                DiscretizationElementAxisTag.from_group(discr
+                                                        .discr_from_dd("vol")
+                                                        .groups[key[-1]]),
+                actx.tag_axis(1,
+                              DiscretizationDOFAxisTag.from_group(discr
+                                                                  .discr_from_dd("vol")
+                                                                  .groups[key[-1]]),
+                              x)),
+            current_state)
 
     visualizer = make_visualizer(discr)
 
