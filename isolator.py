@@ -1150,7 +1150,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         mu = 0
         d_alpha_max = 0
 
-        if state.has_transport:
+        if state.is_viscous:
             from mirgecom.viscous import get_local_max_species_diffusivity
             mu = state.viscosity
             d_alpha_max = \
