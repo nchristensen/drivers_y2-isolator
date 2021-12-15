@@ -63,6 +63,7 @@ from mirgecom.logging_quantities import (
     set_sim_state
 )
 
+from mirgecom.euler import entropy_stable_euler_operator
 from mirgecom.navierstokes import ns_operator
 from mirgecom.artificial_viscosity import av_operator, smoothness_indicator
 from mirgecom.simutil import (
@@ -85,6 +86,7 @@ from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
     PrescribedFluidBoundary,
     IsothermalNoSlipBoundary,
+    AdiabaticSlipBoundary
 )
 #from mirgecom.initializers import (Uniform, PlanarDiscontinuity)
 from mirgecom.eos import IdealSingleGas
@@ -918,7 +920,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     # Don't work with AV
     #inflow = PrescribedViscousBoundary(q_func=inflow_init)
     #outflow = PrescribedViscousBoundary(q_func=outflow_init)
-    wall = IsothermalNoSlipBoundary()
+    # wall = IsothermalNoSlipBoundary()
+    wall = AdiabaticSlipBoundary()
     #wall = AdiabaticNoslipMovingBoundary()
 
     boundaries = {
@@ -953,9 +956,20 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     if rank == 0:
         logging.info("Making discretization")
 
+    from grudge.dof_desc import DISCR_TAG_BASE, DISCR_TAG_QUAD
+    from meshmode.discretization.poly_element import \
+        default_simplex_group_factory, QuadratureSimplexGroupFactory
+
     discr = EagerDGDiscretization(
-        actx, local_mesh, order=order, mpi_communicator=comm
+        actx, local_mesh,
+        discr_tag_to_group_factory={
+            DISCR_TAG_BASE: default_simplex_group_factory(
+                base_dim=local_mesh.dim, order=order),
+            DISCR_TAG_QUAD: QuadratureSimplexGroupFactory(2*order + 1)
+        },
+        mpi_communicator=comm
     )
+    quadrature_tag = DISCR_TAG_QUAD
     if rank == 0:
         logging.info("Done making discretization")
 
@@ -1162,7 +1176,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         return(
             length_scales / (state.wavespeed
             + ((mu + d_alpha_max + alpha) / length_scales))
-        )
+        )/10
 
     def my_get_viscous_cfl(discr, dt, state, alpha):
         """Calculate and return node-local CFL based on current state and timestep.
@@ -1279,17 +1293,22 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     def my_rhs(t, state):
         fluid_state = make_fluid_state(cv=state, gas_model=gas_model)
         alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
+        # return (
+        #     ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
+        #                 gas_model=gas_model)
+        #     + make_conserved(
+        #         dim, q=av_operator(discr, q=fluid_state.cv.join(),
+        #                            boundaries=boundaries,
+        #                            boundary_kwargs={"time": t,
+        #                                             "gas_model": gas_model},
+        #                            alpha=alpha_field, s0=s0_sc, kappa=kappa_sc)
+        #     )
+        #     + sponge(cv=fluid_state.cv, cv_ref=ref_cv, sigma=sponge_sigma)
+        # )
         return (
-            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model)
-            + make_conserved(
-                dim, q=av_operator(discr, q=fluid_state.cv.join(),
-                                   boundaries=boundaries,
-                                   boundary_kwargs={"time": t,
-                                                    "gas_model": gas_model},
-                                   alpha=alpha_field, s0=s0_sc, kappa=kappa_sc)
-            )
-            + sponge(cv=fluid_state.cv, cv_ref=ref_cv, sigma=sponge_sigma)
+            entropy_stable_euler_operator(
+                discr, state=fluid_state, time=t, boundaries=boundaries,
+                gas_model=gas_model, quadrature_tag=quadrature_tag)
         )
 
     current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,
