@@ -45,6 +45,9 @@ from meshmode.array_context import (
     SingleGridWorkBalancingPytatoArrayContext as PytatoPyOpenCLArrayContext
     #PytatoPyOpenCLArrayContext
 )
+
+from grudge.array_context import MPISingleGridWorkBalancingPytatoArrayContext
+
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
 from arraycontext import thaw, freeze, flatten, unflatten, to_numpy, from_numpy
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
@@ -632,7 +635,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         queue = cl.CommandQueue(cl_ctx)
 
     # main array context for the simulation
-    actx = actx_class(
+    actx = actx_class(comm,
         queue,
         allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
@@ -1355,7 +1358,7 @@ if __name__ == "__main__":
         actx_class = PyOpenCLProfilingArrayContext
     else:
         if args.lazy:
-            actx_class = PytatoPyOpenCLArrayContext
+            actx_class = MPISingleGridWorkBalancingPytatoArrayContext
         else:
             actx_class = PyOpenCLArrayContext
 
