@@ -665,6 +665,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     s0_sc = -5.0
     kappa_sc = 0.5
 
+    # material properties
+    mu = 1.0e-5
+    mu_override = False  # optionally read in from input
+
     if user_input_file:
         input_data = None
         if rank == 0:
@@ -709,6 +713,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             pass
         try:
             s0_sc = float(input_data["s0_sc"])
+        except KeyError:
+            pass
+        try:
+            mu_input = float(input_data["mu"])
+            mu_override = True
         except KeyError:
             pass
         try:
@@ -764,17 +773,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     if integrator == "lsrk144":
         timestepper = lsrk144_step
 
-    # {{{ Initialize simple transport model
-    #mu = 0.
-    mu = 1.0e-5
-    #mu = 1.0e-4
-    #mu = 1.0e-3
-    #mu = .01
-    #mu = .1
-    kappa = 1.225*mu/0.75
-    #kappa = 1.e-9
-    #kappa = 0.
-    transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa)
     # }}}
     # working gas: O2/N2 #
     #   O2 mass fraction 0.273
@@ -785,8 +783,29 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     mw_o2 = 15.999*2
     mw_n2 = 14.0067*2
     mf_o2 = 0.273
+    # visocsity @ 400C, Pa-s
+    mu_o2 = 3.76e-5
+    mu_n2 = 3.19e-5
+    mu_mix = mu_o2*mf_o2 + mu_n2*(1-mu_o2)  # 3.3456e-5
     mw = mw_o2*mf_o2 + mw_n2*(1.0 - mf_o2)
     r = 8314.59/mw
+    cp = r*gamma/(gamma - 1)
+    Pr = 0.75
+
+    if mu_override:
+        mu = mu_input
+    else:
+        mu = mu_mix
+
+    kappa = cp*mu/Pr
+
+    if rank == 0:
+        print("\n#### Simluation material properties: ####")
+        print(f"\tmu = {mu}")
+        print(f"\tkappa = {kappa}")
+        print(f"\tPrandtl Number  = {Pr}")
+
+    transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa)
 
     #
     # nozzle inflow #
