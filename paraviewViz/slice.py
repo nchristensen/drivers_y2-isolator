@@ -23,7 +23,7 @@ def simpleSlice(
     imageFile= '{}/{}-{}_{:06d}.png'.format(dir,prefix,varName,iter)
   else:
     imageFile= '{}/{}_{:06d}.png'.format(dir,varName,iter)
-  solutionFile = '{}/mirgecom-{:06d}.pvtu'.format(dir,iter)
+  solutionFile = '{}/isolator-{:06d}.pvtu'.format(dir,iter)
 
   # If func not provided, simply set it to varName -- everything is a Calculator
   if (not func):
@@ -41,7 +41,6 @@ def simpleSlice(
   # Open XDMF
   #data = XDMFReader(FileNames=[solutionFile])
   data = XMLPartitionedUnstructuredGridReader(FileName=[solutionFile])
-#mirgecom000000pvtu.PointArrayStatus = ['cv_mass', 'cv_energy', 'cv_momentum', 'dv_temperature', 'dv_pressure', 'mach', 'velocity', 'sponge_sigma', 'alpha', 'tagged_cells', 'cfl']
   data.PointArrayStatus = ['cv_mass', 'cv_energy', 'cv_momentum', 'dv_temperature', 'dv_pressure', 'mach', 'velocity', 'sponge_sigma', 'alpha', 'tagged_cells', 'cfl']
   readTime = time.time() - t0
 
@@ -147,7 +146,7 @@ def simpleSlice(
   Delete(var)
   Delete(renderView)
   Delete(mainDisplay)
-  Delete(materialLibrary)
+  #Delete(materialLibrary)
   Delete(colorTF)
   Delete(opacityTF)
   Delete(colorbar)
