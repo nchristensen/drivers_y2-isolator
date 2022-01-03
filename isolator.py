@@ -605,6 +605,7 @@ class UniformModified:
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
+         use_overintegration=False,
          actx_class=PyOpenCLArrayContext, casename=None):
     """Drive the Y0 example."""
     cl_ctx = ctx_factory()
@@ -972,9 +973,30 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     if rank == 0:
         logging.info("Making discretization")
 
+    #discr = EagerDGDiscretization(
+        #actx, local_mesh, order=order, mpi_communicator=comm
+#
+    #)
+
+    from grudge.dof_desc import DISCR_TAG_BASE, DISCR_TAG_QUAD
+    from meshmode.discretization.poly_element import \
+          default_simplex_group_factory, QuadratureSimplexGroupFactory
+
     discr = EagerDGDiscretization(
-        actx, local_mesh, order=order, mpi_communicator=comm
+        actx, local_mesh,
+        discr_tag_to_group_factory={
+            DISCR_TAG_BASE: default_simplex_group_factory(
+                base_dim=local_mesh.dim, order=order),
+            DISCR_TAG_QUAD: QuadratureSimplexGroupFactory(2*order + 1)
+        },
+        mpi_communicator=comm
     )
+
+    if use_overintegration:
+        quadrature_tag = DISCR_TAG_QUAD
+    else:
+        quadrature_tag = None
+
     if rank == 0:
         logging.info("Done making discretization")
 
@@ -1300,7 +1322,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
         return (
             ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model)
+                        gas_model=gas_model, quadrature_tag=quadrature_tag)
             + make_conserved(
                 dim, q=av_operator(discr, q=fluid_state.cv.join(),
                                    boundaries=boundaries,
@@ -1365,6 +1387,8 @@ if __name__ == "__main__":
                         help="enable logging profiling [ON]")
     parser.add_argument("--lazy", action="store_true", default=False,
                         help="enable lazy evaluation [OFF]")
+    parser.add_argument("--overintegration", action="store_true",
+        help="use overintegration in the RHS computations")
 
     args = parser.parse_args()
 
@@ -1401,6 +1425,7 @@ if __name__ == "__main__":
     print(f"Running {sys.argv[0]}\n")
     main(restart_filename=restart_filename, user_input_file=input_file,
          use_profiling=args.profile, use_logmgr=args.log,
+         use_overintegration=args.overintegration,
          actx_class=actx_class, casename=casename)
 
 # vim: foldmethod=marker
