@@ -63,7 +63,8 @@ from mirgecom.logging_quantities import (
     set_sim_state
 )
 
-from mirgecom.navierstokes import ns_operator
+from mirgecom.navierstokes import \
+    ns_operator, entropy_stable_ns_operator
 from mirgecom.artificial_viscosity import \
     av_laplacian_operator, smoothness_indicator
 from mirgecom.simutil import (
@@ -608,7 +609,7 @@ class UniformModified:
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
-         use_overintegration=False,
+         use_overintegration=False, use_flux_differencing=False,
          actx_class=PyOpenCLArrayContext, casename=None):
     """Drive the Y0 example."""
     cl_ctx = ctx_factory()
@@ -774,6 +775,18 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         else:
             print("\tDependent variable logging is OFF.")
         print("#### Simluation control data: ####\n")
+
+    if use_flux_differencing and not actx.supports_nonscalar_broadcasting:
+        raise RuntimeError(
+            f"{actx} is not a suitable array context for using flux-differencing. "
+            "The underlying array context must be capable of performing basic "
+            "array broadcasting operations. Use PytatoPyOpenCLArrayContext instead."
+        )
+
+    if use_flux_differencing and not use_overintegration:
+        logger.warning("Using flux-differencing without overintegration affects "
+                       "the accuracy/stability of the method. Consider always "
+                       "using --overintegration for best results.")
 
     timestepper = rk4_step
     if integrator == "euler":
@@ -956,6 +969,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         DTAG_BOUNDARY("wall"): wall
     }
 
+    if use_flux_differencing:
+        navier_stokes_op = entropy_stable_ns_operator
+    else:
+        navier_stokes_op = ns_operator
+
     viz_path = "viz_data/"
     vizname = viz_path + casename
     restart_path = "restart_data/"
@@ -982,11 +1000,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     if rank == 0:
         logging.info("Making discretization")
-
-    #discr = EagerDGDiscretization(
-        #actx, local_mesh, order=order, mpi_communicator=comm
-#
-    #)
 
     from grudge.dof_desc import DISCR_TAG_BASE, DISCR_TAG_QUAD
     from meshmode.discretization.poly_element import \
@@ -1331,8 +1344,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         fluid_state = make_fluid_state(cv=state, gas_model=gas_model)
         alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
         return (
-            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model, quadrature_tag=quadrature_tag)
+            navier_stokes_op(discr, state=fluid_state, time=t,
+                             boundaries=boundaries,
+                             gas_model=gas_model,
+                             quadrature_tag=quadrature_tag)
             + av_laplacian_operator(discr, fluid_state=fluid_state,
                                     boundaries=boundaries,
                                     boundary_kwargs={"time": t,
@@ -1398,6 +1413,8 @@ if __name__ == "__main__":
                         help="enable lazy evaluation [OFF]")
     parser.add_argument("--overintegration", action="store_true",
         help="use overintegration in the RHS computations")
+    parser.add_argument("--esdg", action="store_true",
+        help="use flux-differencing/entropy stable DG for inviscid computations.")
 
     args = parser.parse_args()
 
@@ -1435,6 +1452,7 @@ if __name__ == "__main__":
     main(restart_filename=restart_filename, user_input_file=input_file,
          use_profiling=args.profile, use_logmgr=args.log,
          use_overintegration=args.overintegration,
+         use_flux_differencing=args.esdg,
          actx_class=actx_class, casename=casename)
 
 # vim: foldmethod=marker
