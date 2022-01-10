@@ -130,11 +130,13 @@ class MyRuntimeError(RuntimeError):
     pass
 
 
-def get_mesh(read_mesh=True):
+def get_mesh(dim, read_mesh=True):
     """Get the mesh."""
     from meshmode.mesh.io import read_gmsh
     mesh_filename = "data/isolator.msh"
-    mesh = read_gmsh(mesh_filename, force_ambient_dim=2)
+    #mesh = read_gmsh(mesh_filename, force_ambient_dim=dim)
+    mesh = partial(read_gmsh, filename=mesh_filename, force_ambient_dim=dim)
+    #mesh = read_gmsh(mesh_filename)
 
     return mesh
 
@@ -665,6 +667,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     alpha_sc = 0.3
     s0_sc = -5.0
     kappa_sc = 0.5
+    dim = 2
 
     # material properties
     mu = 1.0e-5
@@ -726,6 +729,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         except KeyError:
             pass
         try:
+            dim = int(input_data["dimen"])
+        except KeyError:
+            pass
+        try:
             integrator = input_data["integrator"]
         except KeyError:
             pass
@@ -758,6 +765,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         print(f"\tcurrent_dt = {current_dt}")
         print(f"\tt_final = {t_final}")
         print(f"\torder = {order}")
+        print(f"\tdimen = {dim}")
         print(f"\tTime integration {integrator}")
         if log_dependent:
             print("\tDependent variable logging is ON.")
@@ -817,7 +825,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     # isentropic expansion based on the area ratios between the inlet (r=54e-3m) and
     # the throat (r=3.167e-3)
     #
-    dim = 2
     vel_inflow = np.zeros(shape=(dim,))
     vel_outflow = np.zeros(shape=(dim,))
     total_pres_inflow = 2.745e5
@@ -888,7 +895,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     temp_sigma = 2500
     temp_wall = 300
 
-    bulk_init = InitACTII(geom_top=geometry_top, geom_bottom=geometry_bottom,
+    bulk_init = InitACTII(dim=dim,
+                          geom_top=geometry_top, geom_bottom=geometry_bottom,
                           P0=total_pres_inflow, T0=total_temp_inflow,
                           temp_wall=temp_wall, temp_sigma=temp_sigma,
                           vel_sigma=vel_sigma)
@@ -967,7 +975,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         assert restart_data["nparts"] == nparts
     else:  # generate the grid from scratch
-        local_mesh, global_nelements = generate_and_distribute_mesh(comm, get_mesh)
+        local_mesh, global_nelements = generate_and_distribute_mesh(
+            comm, get_mesh(dim=dim))
         local_nelements = local_mesh.nelements
 
     if rank == 0:
