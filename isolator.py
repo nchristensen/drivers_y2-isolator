@@ -640,6 +640,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     # main array context for the simulation
     actx = actx_class(comm,
         queue,
+        mpi_base_tag=14000,
         allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
     # an array context for things that just can't lazy
