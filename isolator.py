@@ -64,7 +64,7 @@ from mirgecom.logging_quantities import (
 )
 
 from mirgecom.navierstokes import ns_operator
-from mirgecom.artificial_viscosity import av_operator, smoothness_indicator
+from mirgecom.artificial_viscosity import av_laplacian_operator, smoothness_indicator
 from mirgecom.simutil import (
     check_step,
     generate_and_distribute_mesh,
@@ -1323,13 +1323,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         return (
             ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
                         gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + make_conserved(
-                dim, q=av_operator(discr, q=fluid_state.cv.join(),
-                                   boundaries=boundaries,
-                                   boundary_kwargs={"time": t,
-                                                    "gas_model": gas_model},
-                                   alpha=alpha_field, s0=s0_sc, kappa=kappa_sc)
-            )
+            + av_laplacian_operator(discr, fluid_state=fluid_state,
+                                    boundaries=boundaries,
+                                    boundary_kwargs={"time": t,
+                                                     "gas_model": gas_model},
+                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc)
             + sponge(cv=fluid_state.cv, cv_ref=ref_cv, sigma=sponge_sigma)
         )
 
