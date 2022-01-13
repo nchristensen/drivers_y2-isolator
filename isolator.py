@@ -1333,7 +1333,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         return (
             ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
                         gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + av_laplacian_operator(discr, cv=fluid_state.cv,
+            + av_laplacian_operator(discr, fluid_state=fluid_state,
                                     boundaries=boundaries,
                                     boundary_kwargs={"time": t,
                                                      "gas_model": gas_model},
