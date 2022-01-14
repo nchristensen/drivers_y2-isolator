@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # default branch for building mirgecom for this driver
-mirge_branch="production"
+mirge_branch="production+distributed-parallel-lazy"
 # conda environment name
-conda_env="mirgeDriver.Y2isolator"
+conda_env="mirgeDriver.Y2isolator-parallel"
 
 usage()
 {

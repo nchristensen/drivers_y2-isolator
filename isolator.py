@@ -42,7 +42,7 @@ from functools import partial
 
 from meshmode.array_context import (
     PyOpenCLArrayContext,
-    SingleGridWorkBalancingPytatoArrayContext as PytatoPyOpenCLArrayContext
+    #SingleGridWorkBalancingPytatoArrayContext as PytatoPyOpenCLArrayContext
     #PytatoPyOpenCLArrayContext
 )
 
@@ -393,6 +393,9 @@ class InitACTII:
             if ytop_flat[inode] - ybottom_flat[inode] < throat_height:
                 throat_height = ytop_flat[inode] - ybottom_flat[inode]
                 throat_loc = xpos_flat[inode]
+            # temporary fix for parallel, needs to be reduced across partitions
+            throat_height = self._throat_height
+            throat_loc = self._x_throat
 
         #print(f"throat height {throat_height}")
         for inode in range(xpos_flat.size):
