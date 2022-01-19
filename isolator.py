@@ -39,14 +39,8 @@ import math
 from pytools.obj_array import make_obj_array
 from functools import partial
 
-
-from meshmode.array_context import (
-    PyOpenCLArrayContext,
-    #SingleGridWorkBalancingPytatoArrayContext as PytatoPyOpenCLArrayContext
-    #PytatoPyOpenCLArrayContext
-)
-
-from grudge.array_context import MPISingleGridWorkBalancingPytatoArrayContext
+from grudge.array_context import (MPIPytatoPyOpenCLArrayContext,
+                                  PyOpenCLArrayContext)
 
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
 from arraycontext import thaw, freeze, flatten, unflatten, to_numpy, from_numpy
@@ -641,10 +635,15 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         queue = cl.CommandQueue(cl_ctx)
 
     # main array context for the simulation
-    actx = actx_class(comm,
-        queue,
-        mpi_base_tag=14000,
-        allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    if actx_class == MPIPytatoPyOpenCLArrayContext:
+        actx = actx_class(comm,
+            queue,
+            mpi_base_tag=14000,
+            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    else:
+        actx = actx_class(
+            queue,
+            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
     # an array context for things that just can't lazy
     init_actx = PyOpenCLArrayContext(queue,
@@ -1422,7 +1421,7 @@ if __name__ == "__main__":
         actx_class = PyOpenCLProfilingArrayContext
     else:
         if args.lazy:
-            actx_class = MPISingleGridWorkBalancingPytatoArrayContext
+            actx_class = MPIPytatoPyOpenCLArrayContext
         else:
             actx_class = PyOpenCLArrayContext
 
