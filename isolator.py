@@ -116,7 +116,6 @@ h2.addFilter(f2)
 root_logger.addHandler(h2)
 
 logger = logging.getLogger(__name__)
-#logger = logging.getLogger("my.logger")
 logger.setLevel(logging.DEBUG)
 #logger.debug("A DEBUG message")
 #logger.info("An INFO message")
@@ -429,8 +428,23 @@ class InitACTII:
         wall_temperature = self._temp_wall
         smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
         smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
-        temperature = (wall_temperature +
+        smooth_temperature = (wall_temperature +
             (temperature - wall_temperature)*smoothing_top*smoothing_bottom)
+
+        # make a little region along the top of the cavity where we don't want
+        # the temperature smoothed
+        zeros = 0*xpos
+        xc_left = zeros + 0.65163 + 0.0004
+        xc_right = zeros + 0.72163 - 0.0004
+        yc_top = zeros - 0.006
+        yc_bottom = zeros - 0.01
+
+        left_edge = actx.np.greater(xpos, xc_left)
+        right_edge = actx.np.less(xpos, xc_right)
+        top_edge = actx.np.less(ypos, yc_top)
+        bottom_edge = actx.np.greater(ypos, yc_bottom)
+        inside_block = left_edge*right_edge*top_edge*bottom_edge
+        temperature = actx.np.where(inside_block, temperature, smooth_temperature)
 
         mass = pressure/temperature/gas_const
         velocity = np.zeros(self._dim, dtype=object)
@@ -454,11 +468,30 @@ class InitACTII:
         xc_left = zeros + 0.65163 - 0.000001
         xc_right = zeros + 0.72163 + 0.000001
         yc_top = zeros - 0.0083245
+        yc_bottom = zeros - 0.0283245
+        xc_bottom = zeros + 0.70163
+        wall_theta = np.sqrt(2)/2.
 
         left_edge = actx.np.greater(xpos, xc_left)
         right_edge = actx.np.less(xpos, xc_right)
         top_edge = actx.np.less(ypos, yc_top)
         inside_cavity = left_edge*right_edge*top_edge
+
+        # smooth the temperature at the cavity walls
+        sigma = self._temp_sigma
+        smoothing_front = actx.np.tanh(sigma*(actx.np.abs(xpos-xc_left)))
+        smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-yc_bottom)))
+        wall_dist = (wall_theta*(ypos - yc_bottom) -
+                     wall_theta*(xpos - xc_bottom))
+        smoothing_slant = actx.np.tanh(sigma*(actx.np.abs(wall_dist)))
+        cavity_temperature = (wall_temperature +
+            (temperature - wall_temperature) *
+             smoothing_front*smoothing_bottom*smoothing_slant)
+        temperature = actx.np.where(inside_cavity, cavity_temperature, temperature)
+
+        mass = pressure/temperature/gas_const
+
+        # zero of the velocity
         velocity[0] = actx.np.where(inside_cavity, zeros, velocity[0])
 
         mom = velocity*mass
