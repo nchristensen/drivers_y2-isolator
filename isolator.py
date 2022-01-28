@@ -361,8 +361,12 @@ class InitACTII:
 
         xpos = x_vec[0]
         ypos = x_vec[1]
+        if self._dim == 3:
+            zpos = x_vec[2]
         ytop = 0*x_vec[0]
         actx = xpos.array_context
+        zeros = 0*xpos
+        ones = zeros + 1.0
 
         xpos_flat = to_numpy(flatten(xpos, actx), actx)
         ypos_flat = to_numpy(flatten(ypos, actx), actx)
@@ -428,12 +432,20 @@ class InitACTII:
         wall_temperature = self._temp_wall
         smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
         smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
+        smoothing_fore = ones
+        smoothing_aft = ones
+        z0 = 0.
+        z1 = 0.035
+        if self._dim == 3:
+            smoothing_fore = actx.np.tanh(sigma*(actx.np.abs(zpos-z0)))
+            smoothing_aft = actx.np.tanh(sigma*(actx.np.abs(zpos-z1)))
+
         smooth_temperature = (wall_temperature +
-            (temperature - wall_temperature)*smoothing_top*smoothing_bottom)
+            (temperature - wall_temperature)*smoothing_top*smoothing_bottom *
+                                             smoothing_fore*smoothing_aft)
 
         # make a little region along the top of the cavity where we don't want
         # the temperature smoothed
-        zeros = 0*xpos
         xc_left = zeros + 0.65163 + 0.0004
         xc_right = zeros + 0.72163 - 0.0004
         yc_top = zeros - 0.006
@@ -456,7 +468,13 @@ class InitACTII:
         sigma = self._vel_sigma
         smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
         smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
-        velocity[0] = velocity[0]*smoothing_top*smoothing_bottom
+        smoothing_fore = ones
+        smoothing_aft = ones
+        if self._dim == 3:
+            smoothing_fore = actx.np.tanh(sigma*(actx.np.abs(zpos-z0)))
+            smoothing_aft = actx.np.tanh(sigma*(actx.np.abs(zpos-z1)))
+        velocity[0] = (velocity[0]*smoothing_top*smoothing_bottom *
+                       smoothing_fore*smoothing_aft)
 
         # split into x and y components
         velocity[1] = velocity[0]*actx.np.sin(theta)
