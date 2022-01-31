@@ -54,15 +54,14 @@ if [ -z "$(ls -A emirge)" ]; then
   fi
 else
   echo "emirge install already present. Remove to build anew"
-  return 1
 fi
 
 # install script for mirgecom, 
-if [ ${opt_build_restore} ]; then
+if [ ${opt_restore_build} -eq 1 ]; then
 # attempt to restore an existing build
   echo "Building MIRGE-Com from existing known configuration"
-  if [ ${MIRGE_PLATFORM}]; then
-    if [ -z "$(ls -A platforms/{MIRGE_PLATFORM})" ]; then
+  if [ ${MIRGE_PLATFORM} ]; then
+    if [ -z "$(ls -A platforms/${MIRGE_PLATFORM})" ]; then
       echo "Unknown platform ${MIRGE_PLATFORM}"
       echo "Currently stored configurations are:"
       ls platforms

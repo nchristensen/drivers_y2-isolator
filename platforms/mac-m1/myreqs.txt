@@ -1,16 +1,16 @@
 # requirements.txt created by version.sh
-# Date: Thu Nov  4 11:25:49 CDT 2021
+# Date: Fri Jan 14 11:38:46 CST 2022
 # Host: wirelessprv-10-193-137-95.near.illinois.edu [Darwin wirelessprv-10-193-137-95.near.illinois.edu 20.5.0 Darwin Kernel Version 20.5.0: Sat May  8 05:10:31 PDT 2021; root:xnu-7195.121.3~9/RELEASE_ARM64_T8101 arm64]
-# Python: /Users/someguy/software/Install/Conda/envs/mirgeDriver.Y2isolator/bin/python [Python 3.8.12]
---editable git+https://github.com/inducer/arraycontext.git@56b2f1e#egg=arraycontext
+# Python: /Users/someguy/software/Install/Conda/envs/mirgeDriver.Y2isolator/bin/python [Python 3.9.9]
+--editable git+https://github.com/inducer/arraycontext.git@1810b0e#egg=arraycontext
 --editable git+https://github.com/inducer/dagrt.git@v2021.1-9-g88ae015#egg=dagrt
---editable git+https://github.com/inducer/grudge.git@v2021.1-465-g5844cae#egg=grudge
+--editable git+https://github.com/inducer/grudge.git@v2021.1-478-gbab3926#egg=grudge
 --editable git+https://github.com/inducer/leap.git@94f07be#egg=leap
 --editable git+https://github.com/illinois-ceesd/logpyle.git@v2021.0-7-g42e89c8#egg=logpyle
 --editable git+https://github.com/kaushikcfd/loopy.git@c23358dc#egg=loopy
---editable git+https://github.com/kaushikcfd/meshmode.git@110e689#egg=meshmode
---editable git+ssh://git@github.com/illinois-ceesd/mirgecom@6e8bf71#egg=mirgecom
---editable git+https://github.com/inducer/modepy.git@v2021.1-59-g220183a#egg=modepy
---editable git+https://github.com/inducer/pymbolic.git@v2021.1-25-g36fffc6#egg=pymbolic
---editable git+https://github.com/ecisneros8/pyrometheus.git@c10e99c#egg=pyrometheus
---editable git+https://github.com/kaushikcfd/pytato.git@8e4a793#egg=pytato
+--editable git+https://github.com/kaushikcfd/meshmode.git@405bb8b#egg=meshmode
+--editable git+https://github.com/illinois-ceesd/mirgecom@b6ebff3#egg=mirgecom
+--editable git+https://github.com/inducer/modepy.git@v2021.1-63-g321b274#egg=modepy
+--editable git+https://github.com/inducer/pymbolic.git@v2021.1-30-g7434c58#egg=pymbolic
+--editable git+https://github.com/ecisneros8/pyrometheus.git@1a9b3dc#egg=pyrometheus
+--editable git+https://github.com/inducer/pytato.git@v2021.1-474-ga305579#egg=pytato
