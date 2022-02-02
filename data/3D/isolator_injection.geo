@@ -557,7 +557,7 @@ surface_vector[] = Extrude {0, 0, 0.035} { Surface{1}; };
 //
 //bottom right cavity corner {0.70163,-0.0283245,0.0}
 //Cylinder { x0, y0, z0, xn, yn, zn, r }
-Cylinder(100) = {0.70163, -0.0283245 + inj_h, 0.035/2., inj_d, 0.0, 0.0, inj_t/2.0 };
+Cylinder(100) = {0.70163, -0.0283245 + inj_h + inj_t/2., 0.035/2., inj_d, 0.0, 0.0, inj_t/2.0 };
 injector_surface_vector[] = Boundary{Volume{100};};
 // form union with isolator volume
 union[] = BooleanUnion { Volume{surface_vector[1]}; Delete; }{Volume{100}; Delete; };
