@@ -758,6 +758,150 @@ class InitACTII:
         )
 
 
+class UniformModifiedInjector:
+    r"""Solution initializer for a uniform flow with boundary layer smoothing.
+
+    Similar to the Uniform initializer, except the velocity profile is modified
+    so that the velocity goes to zero at a radius r from a given point xc, yc, zc
+
+    The smoothing comes from a hyperbolic tangent with weight sigma
+
+    .. automethod:: __init__
+    .. automethod:: __call__
+    """
+
+    def __init__(
+            self, *, dim=1, nspecies=0, pressure=1.0, temperature=2.5,
+            velocity=None, mass_fracs=None,
+            temp_wall, temp_sigma, vel_sigma,
+            inj_radius=1., yc=0., zc=0.
+    ):
+        r"""Initialize uniform flow parameters.
+
+        Parameters
+        ----------
+        dim: int
+            specify the number of dimensions for the flow
+        nspecies: int
+            specify the number of species in the flow
+        temperature: float
+            specifies the temperature
+        pressure: float
+            specifies the pressure
+        velocity: numpy.ndarray
+            specifies the flow velocity
+        temp_wall: float
+            wall temperature
+        temp_sigma: float
+            near-wall temperature relaxation parameter
+        vel_sigma: float
+            near-wall velocity relaxation parameter
+            # update this to be current for whats being implemented here
+            # really should just modify the boundary to take a function for smoothing
+        """
+        if velocity is not None:
+            numvel = len(velocity)
+            myvel = velocity
+            if numvel > dim:
+                dim = numvel
+            elif numvel < dim:
+                myvel = np.zeros(shape=(dim,))
+                for i in range(numvel):
+                    myvel[i] = velocity[i]
+            self._velocity = myvel
+        else:
+            self._velocity = np.zeros(shape=(dim,))
+
+        if mass_fracs is not None:
+            self._nspecies = len(mass_fracs)
+            self._mass_fracs = mass_fracs
+        else:
+            self._nspecies = nspecies
+            self._mass_fracs = np.zeros(shape=(nspecies,))
+
+        if self._velocity.shape != (dim,):
+            raise ValueError(f"Expected {dim}-dimensional inputs.")
+
+        self._pressure = pressure
+        self._temperature = temperature
+        self._dim = dim
+        self._temp_wall = temp_wall
+        self._temp_sigma = temp_sigma
+        self._vel_sigma = vel_sigma
+        self._yc = yc
+        self._zc = zc
+        self._inj_radius = inj_radius
+
+    def __call__(self, x_vec, *, eos, **kwargs):
+        """
+        Create a uniform flow solution at locations *x_vec*.
+
+        Parameters
+        ----------
+        x_vec: numpy.ndarray
+            Nodal coordinates
+        eos: :class:`mirgecom.eos.IdealSingleGas`
+            Equation of state class with method to supply gas *gamma*.
+        """
+
+        ypos = x_vec[1]
+        if self._dim == 3:
+            zpos = x_vec[2]
+        actx = ypos.array_context
+        yc = 0.0*x_vec[1] + self._yc
+        zc = 0.0*x_vec[2] + self._zc
+        inj_radius = 0.0*x_vec[0] + self._inj_radius
+        # injector aligned with the x-axis
+        radius = actx.np.sqrt((ypos - yc)**2 + (zpos - zc)**2)
+
+        ones = (1.0 + x_vec[0]) - x_vec[0]
+
+        pressure = self._pressure * ones
+        temperature = self._temperature * ones
+
+        # modify the temperature in the near wall region to match
+        # the isothermal boundaries
+        sigma = self._temp_sigma
+        wall_temperature = self._temp_wall
+        smoothing_radius = actx.np.tanh(sigma*(actx.np.abs(radius - inj_radius)))
+        temperature = (wall_temperature +
+            (temperature - wall_temperature)*smoothing_radius)
+
+        velocity = make_obj_array([self._velocity[i] * ones
+                                   for i in range(self._dim)])
+        y = make_obj_array([self._mass_fracs[i] * ones
+                            for i in range(self._nspecies)])
+        # just comment this out and use single species
+        """
+        if self._nspecies:
+            mass = eos.get_density(pressure, temperature, y)
+        else:
+            mass = pressure/temperature/eos.gas_const()
+        """
+        mass = pressure/temperature/eos.gas_const()
+        specmass = mass * y
+
+        sigma = self._vel_sigma
+        # modify the velocity profile from uniform
+        smoothing_radius = actx.np.tanh(sigma*(actx.np.abs(radius - inj_radius)))
+        velocity[0] = velocity[0]*smoothing_radius
+
+        mom = mass*velocity
+        """
+        if self._nspecies:
+            internal_energy = eos.get_internal_energy(temperature=temperature,
+                                                      species_mass=specmass)
+        else:
+            internal_energy = pressure/(eos.gamma() - 1)
+        """
+        internal_energy = pressure/(eos.gamma() - 1)
+        kinetic_energy = 0.5 * np.dot(mom, mom)/mass
+        energy = internal_energy + kinetic_energy
+
+        return make_conserved(dim=self._dim, mass=mass, energy=energy,
+                              momentum=mom, species_mass=specmass)
+
+
 class UniformModified:
     r"""Solution initializer for a uniform flow with boundary layer smoothing.
 
@@ -846,9 +990,15 @@ class UniformModified:
         """
 
         ypos = x_vec[1]
+        if self._dim == 3:
+            zpos = x_vec[2]
         actx = ypos.array_context
         ymax = 0.0*x_vec[1] + self._ymax
         ymin = 0.0*x_vec[1] + self._ymin
+        if self._dim == 3:
+            zmax = 0.0*x_vec[2] + 0.035
+            zmin = 0.0*x_vec[2]
+
         ones = (1.0 + x_vec[0]) - x_vec[0]
 
         pressure = self._pressure * ones
@@ -860,8 +1010,14 @@ class UniformModified:
         wall_temperature = self._temp_wall
         smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
         smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
+        smoothing_aft = ones
+        smoothing_fore = ones
+        if self._dim == 3:
+            smoothing_aft = actx.np.tanh(sigma*(actx.np.abs(zpos-zmin)))
+            smoothing_fore = actx.np.tanh(sigma*(actx.np.abs(zpos-zmax)))
         temperature = (wall_temperature +
-                       (temperature - wall_temperature)*smoothing_min*smoothing_max)
+                       (temperature - wall_temperature)*smoothing_min*smoothing_max *
+                        smoothing_aft*smoothing_fore)
 
         velocity = make_obj_array([self._velocity[i] * ones
                                    for i in range(self._dim)])
@@ -881,7 +1037,11 @@ class UniformModified:
         # modify the velocity profile from uniform
         smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
         smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
-        velocity[0] = velocity[0]*smoothing_max*smoothing_min
+        if self._dim == 3:
+            smoothing_aft = actx.np.tanh(sigma*(actx.np.abs(zpos-zmin)))
+            smoothing_fore = actx.np.tanh(sigma*(actx.np.abs(zpos-zmax)))
+        velocity[0] = (velocity[0]*smoothing_max*smoothing_min *
+                      smoothing_aft*smoothing_fore)
 
         mom = mass*velocity
         """
@@ -1207,7 +1367,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                               gamma=gamma_inj)
 
     rho_injection = pres_injection/temp_injection/r
-    vel_injection[0] = inj_mach*math.sqrt(gamma*pres_injection/rho_injection)
+    vel_injection[0] = -inj_mach*math.sqrt(gamma*pres_injection/rho_injection)
 
     if rank == 0:
         print(f"\tinjector temperature {temp_injection}")
@@ -1280,7 +1440,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         ymax=0.011675488
     )
 
-    _injection_init = UniformModified(
+    _injection_init = UniformModifiedInjector(
         dim=dim, nspecies=nspecies,
         mass_fracs=y_fuel,
         temperature=temp_injection,
@@ -1289,8 +1449,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         temp_wall=temp_wall,
         temp_sigma=temp_sigma_injection,
         vel_sigma=vel_sigma_injection,
-        ymin=inj_ymin,
-        ymax=inj_ymax
+        yc=-0.0283245 + 4e-3 + 1.59e-3/2.,
+        zc=0.035/2.,
+        inj_radius=1.59e-3/2.
     )
 
     def _boundary_state_func(discr, btag, gas_model, actx, init_func, **kwargs):
