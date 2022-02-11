@@ -556,10 +556,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         status_msg = f"-------- dt = {dt:1.3e}, cfl = {cfl:1.4f}"
         temperature = thaw(freeze(dv.temperature, actx), actx)
         pressure = thaw(freeze(dv.pressure, actx), actx)
-        p_min = vol_min(pressure)
-        p_max = vol_min(pressure)
-        t_min = vol_min(temperature)
-        t_max = vol_min(temperature)
+        p_min = global_reduce(vol_min_loc(pressure), op="min")
+        p_max = global_reduce(vol_min_loc(pressure), op="max")
+        t_min = global_reduce(vol_min_loc(temperature), op="min")
+        t_max = global_reduce(vol_min_loc(temperature), op="max")
 
         dv_status_msg = (
             f"\n-------- P (min, max) (Pa) = ({p_min:1.9e}, {p_max:1.9e})")
