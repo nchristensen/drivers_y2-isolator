@@ -560,7 +560,7 @@ class InitACTII:
         right_edge = actx.np.less(xpos, xc_right)
         bottom_edge = actx.np.greater(ypos, yc_bottom)
         top_edge = actx.np.less(ypos, yc_top)
-        fore_edge = ones
+        aft_edge = ones
         fore_edge = ones
         if self._dim == 3:
             aft_edge = actx.np.greater(zpos, zc_aft)

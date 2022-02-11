@@ -96,15 +96,15 @@ class SingleLevelFilter(logging.Filter):
             return (record.levelno == self.passlevel)
 
 
-h1 = logging.StreamHandler(sys.stdout)
-f1 = SingleLevelFilter(logging.INFO, False)
-h1.addFilter(f1)
-root_logger = logging.getLogger()
-root_logger.addHandler(h1)
-h2 = logging.StreamHandler(sys.stderr)
-f2 = SingleLevelFilter(logging.INFO, True)
-h2.addFilter(f2)
-root_logger.addHandler(h2)
+#h1 = logging.StreamHandler(sys.stdout)
+#f1 = SingleLevelFilter(logging.INFO, False)
+#h1.addFilter(f1)
+#root_logger = logging.getLogger()
+#root_logger.addHandler(h1)
+#h2 = logging.StreamHandler(sys.stderr)
+#f2 = SingleLevelFilter(logging.INFO, True)
+#h2.addFilter(f2)
+#root_logger.addHandler(h2)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -649,11 +649,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         if state.is_viscous:
             from mirgecom.viscous import get_local_max_species_diffusivity
             mu = state.viscosity
-            d_alpha_max = \
-                get_local_max_species_diffusivity(
-                    state.array_context,
-                    state.species_diffusivity
-                )
+            # this appears to break lazy for whatever reason
+            #d_alpha_max = \
+                #get_local_max_species_diffusivity(
+                    #state.array_context,
+                    #state.species_diffusivity
+                #)
 
         return(
             length_scales / (state.wavespeed
