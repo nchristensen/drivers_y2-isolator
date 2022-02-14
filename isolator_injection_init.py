@@ -517,18 +517,9 @@ class InitACTII:
              smoothing_front*smoothing_bottom*smoothing_slant)
         temperature = actx.np.where(inside_cavity, cavity_temperature, temperature)
 
-        #mass = eos.get_density(pressure, temperature, y)
-        mass = pressure/temperature/gas_const
-        velocity = np.zeros(self._dim, dtype=object)
-        mom = mass*velocity
-        #energy = mass*eos.get_internal_energy(temperature, y)
-        energy = pressure/(gamma - 1)
-        cv = make_conserved(dim=self._dim, mass=mass, momentum=mom, energy=energy,
-                            species_mass=mass*y)
-        velocity[0] = mach*eos.sound_speed(cv, temperature)
-
         # zero of the velocity
-        velocity[0] = actx.np.where(inside_cavity, zeros, velocity[0])
+        for i in range(self._dim):
+            velocity[i] = actx.np.where(inside_cavity, zeros, velocity[i])
 
         # fuel stream initialization
         # initially in pressure/temperature equilibrium with the cavity
@@ -717,6 +708,7 @@ class InitACTII:
         mass = actx.np.where(inside_injector, inj_mass, mass)
         velocity[0] = actx.np.where(inside_injector, inj_velocity[0], velocity[0])
         energy = actx.np.where(inside_injector, inj_energy, energy)
+
         mom = mass*velocity
         energy = (energy + np.dot(mom, mom)/(2.0*mass))
         return make_conserved(
@@ -922,8 +914,10 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     geometry_top = comm.bcast(geometry_top, root=0)
 
     # parameters to adjust the shape of the initialization
-    vel_sigma = 2000
-    temp_sigma = 2500
+    #vel_sigma = 2000
+    #temp_sigma = 2500
+    vel_sigma = 1000
+    temp_sigma = 1250
     # adjusted to match the mass flow rate
     vel_sigma_injection = 5000
     temp_sigma_injection = 5000

@@ -556,10 +556,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         status_msg = f"-------- dt = {dt:1.3e}, cfl = {cfl:1.4f}"
         temperature = thaw(freeze(dv.temperature, actx), actx)
         pressure = thaw(freeze(dv.pressure, actx), actx)
-        p_min = global_reduce(vol_min_loc(pressure), op="min")
-        p_max = global_reduce(vol_min_loc(pressure), op="max")
-        t_min = global_reduce(vol_min_loc(temperature), op="min")
-        t_max = global_reduce(vol_min_loc(temperature), op="max")
+        p_min = vol_min(pressure)
+        p_max = vol_max(pressure)
+        t_min = vol_min(temperature)
+        t_max = vol_max(temperature)
 
         dv_status_msg = (
             f"\n-------- P (min, max) (Pa) = ({p_min:1.9e}, {p_max:1.9e})")
@@ -616,8 +616,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                      health_pres_min, health_pres_max),
                                      op="lor"):
             health_error = True
-            p_min = actx.to_numpy(nodal_min(discr, "vol", dv.pressure))
-            p_max = actx.to_numpy(nodal_max(discr, "vol", dv.pressure))
+            p_min = vol_min(dv.pressure)
+            p_max = vol_max(dv.pressure)
             logger.info(f"Pressure range violation ({p_min=}, {p_max=})")
 
         return health_error

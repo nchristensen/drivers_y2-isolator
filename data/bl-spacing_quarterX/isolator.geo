@@ -1,3 +1,5 @@
+SetFactory("OpenCASCADE");
+
 If(Exists(size))
     basesize=size;
 Else
@@ -447,10 +449,12 @@ Point(423) = {0.38328,-0.0083245,0.0,basesize};
 
 //Make Lines
 //Top
-BSpline(1000) = {1:212};  // goes clockwise
+//BSpline(1000) = {1:212};  // goes clockwise
+Spline(1000) = {1:212};  // goes clockwise
 
 //Bottom Lines
-BSpline(1001) = {213:423}; // goes counter-clockwise
+//BSpline(1001) = {213:423}; // goes counter-clockwise
+Spline(1001) = {213:423}; // goes counter-clockwise
 
 //Mid-point on inlet
 Point(460) = {0.21, (0.0270645-0.0270645)/2.,0.0,2*basesize};
@@ -522,43 +526,12 @@ Curve Loop(1) = {
 -1001 // bottom wall
 };
 
-////Create lineloop of this geometry
-//// start on the bottom left and go around clockwise
-//Curve Loop(1) = {
-//-1001,
-//-450,
-//-451,
-//-452,
-//-453,
-//-454,
-//-455,
-//-456,
-//-457,
-//1000,
-//-423
-//};
-
-// old from wyatt
-//Line Loop(1) = {
-////1:211,
-//1000,
-//-1001,
-//-423,
-////-458,
-////-459,
-//-450,
-//-451,
-//-452,
-//-453,
-//-454,
-//-455,
-//-456,
-//457
-//};
-
 Plane Surface(1) = {1};
 
-Physical Surface('domain') = {1};
+// negative to preserve node ordering (clockwise) in the element list
+// gets swapped with cascade, despite being in the correct 
+// order in our curve loop
+Physical Surface('domain') = {-1};
 
 Physical Curve('inflow') = {-423};
 //Physical Curve('inflow') = {458,459};

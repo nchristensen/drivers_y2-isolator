@@ -484,7 +484,8 @@ class InitACTII:
         # initially in pressure/temperature equilibrium with the exterior flow
         zeros = 0*xpos
         xc_left = zeros + 0.65163 - 0.000001
-        xc_right = zeros + 0.72163 + 0.000001
+        #xc_right = zeros + 0.72163 + 0.000001
+        xc_right = zeros + 0.73
         yc_top = zeros - 0.0083245
         yc_bottom = zeros - 0.0283245
         xc_bottom = zeros + 0.70163
@@ -1010,7 +1011,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
         DTAG_BOUNDARY("outflow"): outflow,
-        DTAG_BOUNDARY("wall"): wall
+        DTAG_BOUNDARY("wall"): wall,
+        #DTAG_BOUNDARY("injection"): wall
     }
 
     viz_path = "viz_data/"
