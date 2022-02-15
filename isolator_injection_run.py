@@ -410,7 +410,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         global_nelements = restart_data["global_nelements"]
         restart_order = int(restart_data["order"])
 
-        assert restart_data["nparts"] == nparts
+        assert restart_data["num_parts"] == nparts
     else:
         error_message = "Driver only supports restart. Start with -r <filename>"
         raise RuntimeError(error_message)
