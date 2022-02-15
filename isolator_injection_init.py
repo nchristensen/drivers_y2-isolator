@@ -836,13 +836,6 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     vel_outflow = np.zeros(shape=(dim,))
     vel_injection = np.zeros(shape=(dim,))
 
-    total_pres_inflow = 2.745e5
-    total_temp_inflow = 2076.43
-
-    # injection flow properties
-    total_pres_inj = 50400
-    total_temp_inj = 300.0
-
     throat_height = 3.61909e-3
     inlet_height = 54.129e-3
     outlet_height = 28.54986e-3
