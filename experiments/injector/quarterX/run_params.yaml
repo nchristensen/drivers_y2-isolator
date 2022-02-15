@@ -1,0 +1,17 @@
+nviz: 10
+nrestart: 1000
+nhealth: 1
+nstatus: 1
+current_dt: 1.0e-8
+t_final: 5.e-4
+#t_final: 5.0e-10
+order:  2
+dimen: 2
+#alpha_sc: 0.
+alpha_sc: 0.1
+#alpha_sc: 10
+kappa_sc: 2.0
+s0_sc: -5.0
+integrator: lsrk54
+health_pres_min: 10
+health_pres_max: 2.e7
