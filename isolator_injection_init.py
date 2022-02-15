@@ -36,7 +36,6 @@ import pyopencl as cl
 import numpy.linalg as la  # noqa
 import pyopencl.array as cla  # noqa
 import math
-from pytools.obj_array import make_obj_array
 from functools import partial
 
 from grudge.array_context import PyOpenCLArrayContext
@@ -460,14 +459,11 @@ class InitACTII:
         temperature = (wall_temperature +
             (temperature - wall_temperature)*smoothing_fore*smoothing_aft)
 
-        #y = make_obj_array([self._mass_frac[i] * ones
-                            #for i in range(self._nspecies)])
         y = ones*self._mass_frac
 
         #mass = eos.get_density(pressure, temperature, y)
         mass = pressure/temperature/gas_const
         velocity = ones*np.zeros(self._dim, dtype=object)
-        #velocity = make_obj_array([zeros for i in range(self._dim)])
         mom = mass*velocity
         #energy = mass*eos.get_internal_energy(temperature, y)
         energy = pressure/(gamma - 1)
@@ -563,8 +559,6 @@ class InitACTII:
         inside_injector = (left_edge*right_edge*top_edge*bottom_edge *
                            aft_edge*fore_edge)
 
-        inj_y = make_obj_array([self._inj_mass_frac[i] * ones
-                            for i in range(self._nspecies)])
         inj_y = ones*self._inj_mass_frac
 
         inj_velocity = mach*np.zeros(self._dim, dtype=object)
