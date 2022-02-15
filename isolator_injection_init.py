@@ -460,12 +460,14 @@ class InitACTII:
         temperature = (wall_temperature +
             (temperature - wall_temperature)*smoothing_fore*smoothing_aft)
 
-        y = make_obj_array([self._mass_frac[i] * ones
-                            for i in range(self._nspecies)])
+        #y = make_obj_array([self._mass_frac[i] * ones
+                            #for i in range(self._nspecies)])
+        y = ones*self._mass_frac
 
         #mass = eos.get_density(pressure, temperature, y)
         mass = pressure/temperature/gas_const
-        velocity = np.zeros(self._dim, dtype=object)
+        velocity = ones*np.zeros(self._dim, dtype=object)
+        #velocity = make_obj_array([zeros for i in range(self._dim)])
         mom = mass*velocity
         #energy = mass*eos.get_internal_energy(temperature, y)
         energy = pressure/(gamma - 1)
@@ -517,9 +519,11 @@ class InitACTII:
              smoothing_front*smoothing_bottom*smoothing_slant)
         temperature = actx.np.where(inside_cavity, cavity_temperature, temperature)
 
-        # zero of the velocity
+        # zero out the velocity
         for i in range(self._dim):
-            velocity[i] = actx.np.where(inside_cavity, zeros, velocity[i])
+            vel_comp = velocity[i]
+            #velocity[i] = actx.np.where(inside_cavity, zeros, velocity[i])
+            velocity[i] = actx.np.where(inside_cavity, zeros, vel_comp)
 
         # fuel stream initialization
         # initially in pressure/temperature equilibrium with the cavity
@@ -561,6 +565,7 @@ class InitACTII:
 
         inj_y = make_obj_array([self._inj_mass_frac[i] * ones
                             for i in range(self._nspecies)])
+        inj_y = ones*self._inj_mass_frac
 
         inj_velocity = mach*np.zeros(self._dim, dtype=object)
         inj_velocity[0] = self._inj_vel[0]
