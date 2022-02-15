@@ -1134,6 +1134,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     mu = 1.0e-5
     mu_override = False  # optionally read in from input
 
+    # ACTII flow properties
+    total_pres_inflow = 2.745e5
+    total_temp_inflow = 2076.43
+
+    # injection flow properties
+    total_pres_inj = 50400
+    total_temp_inj = 300.0
+
     if user_input_file:
         input_data = None
         if rank == 0:
@@ -1205,6 +1213,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             health_pres_max = float(input_data["health_pres_max"])
         except KeyError:
             pass
+        try:
+            total_pres_inj = float(input_data["total_pres_inj"])
+        except KeyError:
+            pass
+        try:
+            total_temp_inj = float(input_data["total_temp_inj"])
+        except KeyError:
+            pass
 
     # param sanity check
     allowed_integrators = ["rk4", "euler", "lsrk54", "lsrk144"]
@@ -1234,6 +1250,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         else:
             print("\tDependent variable logging is OFF.")
         print("#### Simluation control data: ####\n")
+
+    if rank == 0:
+        print("\n#### Simluation setup data: ####")
+        print(f"\ttotal_pres_inj = {total_pres_inj}")
+        print(f"\ttotal_temp_inj = {total_temp_inj}")
+        print("\n#### Simluation setup data: ####")
 
     timestepper = rk4_step
     if integrator == "euler":
@@ -1293,12 +1315,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     vel_outflow = np.zeros(shape=(dim,))
     vel_injection = np.zeros(shape=(dim,))
 
-    total_pres_inflow = 2.745e5
-    total_temp_inflow = 2076.43
-
-    # injection flow properties
-    total_pres_inj = 50400
-    total_temp_inj = 300.0
 
     throat_height = 3.61909e-3
     inlet_height = 54.129e-3

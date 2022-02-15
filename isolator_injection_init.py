@@ -748,6 +748,14 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     # material properties
     mu = 1.0e-5
 
+    # ACTII flow properties
+    total_pres_inflow = 2.745e5
+    total_temp_inflow = 2076.43
+
+    # injection flow properties
+    total_pres_inj = 50400
+    total_temp_inj = 300.0
+
     if user_input_file:
         input_data = None
         if rank == 0:
@@ -762,11 +770,25 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
             dim = int(input_data["dimen"])
         except KeyError:
             pass
+        try:
+            total_pres_inj = float(input_data["total_pres_inj"])
+        except KeyError:
+            pass
+        try:
+            total_temp_inj = float(input_data["total_temp_inj"])
+        except KeyError:
+            pass
 
     if rank == 0:
         print("\n#### Simluation control data: ####")
         print(f"\torder = {order}")
         print(f"\tdimen = {dim}")
+
+    if rank == 0:
+        print("\n#### Simluation setup data: ####")
+        print(f"\ttotal_pres_inj = {total_pres_inj}")
+        print(f"\ttotal_temp_inj = {total_temp_inj}")
+        print("\n#### Simluation setup data: ####")
 
     # }}}
     # working gas: O2/N2 #
@@ -797,7 +819,7 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
         print(f"\tkappa = {kappa}")
         print(f"\tPrandtl Number  = {Pr}")
 
-    spec_diffusivity = 0. * np.ones(nspecies)
+    spec_diffusivity = 1.e-4 * np.ones(nspecies)
     transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa,
                                       species_diffusivity=spec_diffusivity)
 
