@@ -517,16 +517,15 @@ class InitACTII:
 
         # zero out the velocity
         for i in range(self._dim):
-            vel_comp = velocity[i]
-            #velocity[i] = actx.np.where(inside_cavity, zeros, velocity[i])
-            velocity[i] = actx.np.where(inside_cavity, zeros, vel_comp)
+            velocity[i] = actx.np.where(inside_cavity, zeros, velocity[i])
 
         # fuel stream initialization
         # initially in pressure/temperature equilibrium with the cavity
         #inj_left = 0.71
-        #inj_left = 0.704
+        # even with the bottom corner
+        inj_left = 0.70563
         # even with the top corner
-        inj_left = 0.7074
+        #inj_left = 0.7074
         #inj_left = 0.65
         inj_right = 0.73
         inj_top = -0.0226
@@ -572,9 +571,9 @@ class InitACTII:
         # the entrace to the injector
         #inj_fuel_x0 = 0.7085
         # back inside the injector
-        inj_fuel_x0 = 0.717
+        #inj_fuel_x0 = 0.717
         # out in the cavity
-        #inj_fuel_x0 = 0.7
+        inj_fuel_x0 = 0.7
         inj_fuel_y0 = -0.0243245 - 3.e-3
         inj_fuel_y1 = -0.0227345 + 3.e-3
         inj_fuel_z0 = 0.035/2. - 3.e-3
