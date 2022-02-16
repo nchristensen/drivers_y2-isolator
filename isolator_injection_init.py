@@ -264,7 +264,7 @@ class InitACTII:
 
     def __init__(
             self, *, dim=2, nspecies=0, geom_top, geom_bottom,
-            P0, T0, temp_wall, temp_sigma, vel_sigma,
+            P0, T0, temp_wall, temp_sigma, vel_sigma, gamma_guess,
             mass_frac=None,
             inj_pres, inj_temp, inj_vel, inj_mass_frac=None,
             inj_temp_sigma, inj_vel_sigma,
@@ -280,6 +280,8 @@ class InitACTII:
             stagnation pressure
         T0: float
             stagnation temperature
+        gamma_guess: float
+            guesstimate for gamma
         temp_wall: float
             wall temperature
         temp_sigma: float
@@ -316,6 +318,7 @@ class InitACTII:
         self._temp_wall = temp_wall
         self._temp_sigma = temp_sigma
         self._vel_sigma = vel_sigma
+        self._gamma_guess = gamma_guess
         # TODO, calculate these from the geometry files
         self._throat_height = 3.61909e-3
         self._x_throat = 0.283718298
@@ -360,55 +363,90 @@ class InitACTII:
         zeros = 0*xpos
         ones = zeros + 1.0
 
-        xpos_flat = to_numpy(flatten(xpos, actx), actx)
-        ypos_flat = to_numpy(flatten(ypos, actx), actx)
+        mach = zeros
+        ytop = zeros
+        ybottom = zeros
+        theta = zeros
         gamma = eos.gamma()
         gas_const = eos.gas_const()
-
-        ytop_flat = 0*xpos_flat
-        ybottom_flat = 0*xpos_flat
-        theta_top_flat = 0*xpos_flat
-        theta_bottom_flat = 0*xpos_flat
-        mach_flat = 0*xpos_flat
-        theta_flat = 0*xpos_flat
-        throat_height = 1
 
         theta_geom_top = get_theta_from_data(self._geom_top)
         theta_geom_bottom = get_theta_from_data(self._geom_bottom)
 
-        for inode in range(xpos_flat.size):
-            ytop_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_top)
-            ybottom_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_bottom)
-            theta_top_flat[inode] = get_y_from_x(xpos_flat[inode], theta_geom_top)
-            theta_bottom_flat[inode] = get_y_from_x(xpos_flat[inode],
-                                                    theta_geom_bottom)
-            if ytop_flat[inode] - ybottom_flat[inode] < throat_height:
-                throat_height = ytop_flat[inode] - ybottom_flat[inode]
-                throat_loc = xpos_flat[inode]
-            # temporary fix for parallel, needs to be reduced across partitions
-            throat_height = self._throat_height
-            throat_loc = self._x_throat
+        # process the mesh piecemeal, one interval at a time
+        # linearly interpolate between the data points
+        area_ratio = ((self._geom_top[0][1] - self._geom_bottom[0][1]) /
+                      self._throat_height)
+        if self._geom_top[0][0] < self._x_throat:
+            mach_left = getMachFromAreaRatio(area_ratio=area_ratio,
+                                             gamma=self._gamma_guess,
+                                             mach_guess=0.01)
+        elif self._geom_top[0][0] > self._x_throat:
+            mach_left = getMachFromAreaRatio(area_ratio=area_ratio,
+                                             gamma=self._gamma_guess,
+                                             mach_guess=1.01)
+        else:
+            mach_left = 1.0
+        x_left = self._geom_top[0][0]
+        ytop_left = self._geom_top[0][1]
+        ybottom_left = self._geom_bottom[0][1]
+        theta_top_left = theta_geom_top[0][1]
+        theta_bottom_left = theta_geom_bottom[0][1]
 
-        #print(f"throat height {throat_height}")
-        for inode in range(xpos_flat.size):
-            area_ratio = (ytop_flat[inode] - ybottom_flat[inode])/throat_height
-            theta_flat[inode] = (theta_bottom_flat[inode] +
-                          (theta_top_flat[inode]-theta_bottom_flat[inode]) /
-                          (ytop_flat[inode]-ybottom_flat[inode]) *
-                          (ypos_flat[inode] - ybottom_flat[inode]))
-            if xpos_flat[inode] < throat_loc:
-                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio,
-                                                        gamma=gamma, mach_guess=0.01)
-            elif xpos_flat[inode] > throat_loc:
-                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio,
-                                                        gamma=gamma, mach_guess=1.01)
+        for ind in range(1, self._geom_top.shape[0]):
+            area_ratio = ((self._geom_top[ind][1] - self._geom_bottom[ind][1]) /
+                          self._throat_height)
+            if self._geom_top[ind][0] < self._x_throat:
+                mach_right = getMachFromAreaRatio(area_ratio=area_ratio,
+                                                 gamma=self._gamma_guess,
+                                                 mach_guess=0.01)
+            elif self._geom_top[ind][0] > self._x_throat:
+                mach_right = getMachFromAreaRatio(area_ratio=area_ratio,
+                                                 gamma=self._gamma_guess,
+                                                 mach_guess=1.01)
             else:
-                mach_flat[inode] = 1.0
+                mach_right = 1.0
+            ytop_right = self._geom_top[ind][1]
+            ybottom_right = self._geom_bottom[ind][1]
+            theta_top_right = theta_geom_top[ind][1]
+            theta_bottom_right = theta_geom_bottom[ind][1]
 
-        ytop = unflatten(xpos, from_numpy(ytop_flat, actx), actx)
-        ybottom = unflatten(xpos, from_numpy(ybottom_flat, actx), actx)
-        mach = unflatten(xpos, from_numpy(mach_flat, actx), actx)
-        theta = unflatten(xpos, from_numpy(theta_flat, actx), actx)
+            # interpolate our data
+            x_right = self._geom_top[ind][0]
+
+            dx = x_right - x_left
+            dm = mach_right - mach_left
+            dyt = ytop_right - ytop_left
+            dyb = ybottom_right - ybottom_left
+            dtb = theta_bottom_right - theta_bottom_left
+            dtt = theta_top_right - theta_top_left
+
+            local_mach = mach_left + (xpos - x_left)*dm/dx
+            local_ytop = ytop_left + (xpos - x_left)*dyt/dx
+            local_ybottom = ybottom_left + (xpos - x_left)*dyb/dx
+            local_theta_bottom = theta_bottom_left + (xpos - x_left)*dtb/dx
+            local_theta_top = theta_top_left + (xpos - x_left)*dtt/dx
+
+            local_theta = (local_theta_bottom +
+                           (local_theta_top - local_theta_bottom) /
+                           (local_ytop - local_ybottom)*(ypos - local_ybottom))
+
+            # extend just a a little bit to catch the edges
+            left_edge = actx.np.greater(xpos, x_left - 1.e-6)
+            right_edge = actx.np.less(xpos, x_right + 1.e-6)
+            inside_block = left_edge*right_edge
+
+            mach = actx.np.where(inside_block, local_mach, mach)
+            ytop = actx.np.where(inside_block, local_ytop, ytop)
+            ybottom = actx.np.where(inside_block, local_ybottom, ybottom)
+            theta = actx.np.where(inside_block, local_theta, theta)
+
+            mach_left = mach_right
+            ytop_left = ytop_right
+            ybottom_left = ybottom_right
+            theta_bottom_left = theta_bottom_right
+            theta_top_left = theta_top_right
+            x_left = x_right
 
         pressure = getIsentropicPressure(
             mach=mach,
@@ -943,7 +981,7 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
                           P0=total_pres_inflow, T0=total_temp_inflow,
                           temp_wall=temp_wall, temp_sigma=temp_sigma,
                           vel_sigma=vel_sigma, nspecies=nspecies,
-                          mass_frac=y,
+                          mass_frac=y, gamma_guess=gamma,
                           inj_pres=total_pres_inj,
                           inj_temp=total_temp_inj,
                           inj_vel=vel_injection, inj_mass_frac=y_fuel,
