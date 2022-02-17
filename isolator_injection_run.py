@@ -186,7 +186,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
          use_overintegration=False,
          actx_class=PyOpenCLArrayContext, casename=None):
-    """Drive the Y0 example."""
+
     cl_ctx = ctx_factory()
 
     from mpi4py import MPI

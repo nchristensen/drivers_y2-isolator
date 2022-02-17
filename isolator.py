@@ -687,7 +687,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         queue = cl.CommandQueue(cl_ctx)
 
     # main array context for the simulation
-    if actx_class == MPIPytatoPyOpenCLArrayContext:
+    #if actx_class == MPIPytatoPyOpenCLArrayContext:
+    if 0:
         actx = actx_class(comm,
             queue,
             mpi_base_tag=14000,

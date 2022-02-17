@@ -38,8 +38,9 @@ import pyopencl.array as cla  # noqa
 import math
 from functools import partial
 
-from grudge.array_context import PyOpenCLArrayContext
-from arraycontext import thaw, flatten, unflatten, to_numpy, from_numpy
+from grudge.array_context import (MPIPytatoPyOpenCLArrayContext,
+                                  PyOpenCLArrayContext)
+from arraycontext import thaw
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
 from grudge.shortcuts import make_visualizer
@@ -758,9 +759,10 @@ class InitACTII:
 
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, user_input_file=None,
-         use_overintegration=False, casename=None):
+         use_overintegration=False,
+         actx_class=PyOpenCLArrayContext,
+         casename=None):
 
-    """Drive the Y0 example."""
     cl_ctx = ctx_factory()
 
     from mpi4py import MPI
@@ -775,8 +777,15 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
         casename = "mirgecom"
 
     queue = cl.CommandQueue(cl_ctx)
-    actx = PyOpenCLArrayContext(queue,
-        allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+
+    # main array context for the simulation
+    if actx_class == MPIPytatoPyOpenCLArrayContext:
+        actx = actx_class(comm, queue, mpi_base_tag=14000,
+            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    else:
+        actx = actx_class(
+            queue,
+            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
     # discretization and model control
     order = 1
@@ -1062,6 +1071,8 @@ if __name__ == "__main__":
                         nargs="?", action="store", help="simulation config file")
     parser.add_argument("-c", "--casename", type=ascii, dest="casename", nargs="?",
                         action="store", help="simulation case name")
+    parser.add_argument("--lazy", action="store_true", default=False,
+                        help="enable lazy evaluation [OFF]")
 
     args = parser.parse_args()
 
@@ -1073,6 +1084,11 @@ if __name__ == "__main__":
     else:
         print(f"Default casename {casename}")
 
+    if args.lazy:
+        actx_class = MPIPytatoPyOpenCLArrayContext
+    else:
+        actx_class = PyOpenCLArrayContext
+
     input_file = None
     if args.input_file:
         input_file = args.input_file.replace("'", "")
@@ -1081,6 +1097,6 @@ if __name__ == "__main__":
         print("No user input file, using default values")
 
     print(f"Running {sys.argv[0]}\n")
-    main(user_input_file=input_file, casename=casename)
+    main(user_input_file=input_file, actx_class=actx_class, casename=casename)
 
 # vim: foldmethod=marker
