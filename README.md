@@ -7,7 +7,9 @@ The simulation is viscous, 2D, single species.
 
 Initialization considers the Mach number as a function of duct area ratio and inflow stagnation conditions. The velocity and tempearture are smoothed using tanh functions to match the near wall flow conditions for isothermal, noslip walls.  The velocity is further modified to match the duct geometry.
 
-## Directoy structure
+There are two configurations, [isolator.py](isolator.py) and [isolator_injection.py](isolator_injection.py). The former is a geometry/init without fuel injection while the later includes injection. Note that the isolator_injection driver is currently split into two pieces, run and init, both support lazy. The original isolator driver used an eager array context for intization and a strategy that could be quite time consuming.
+
+## Directory structure
 
 The main driver is isolator.py with the problem setup in [baseline](baseline) being the generally accepted way to run the simulation.
 

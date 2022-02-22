@@ -39,12 +39,9 @@ import math
 from pytools.obj_array import make_obj_array
 from functools import partial
 
+from grudge.array_context import (MPISingleGridWorkBalancingPytatoArrayContext,
+                                  PyOpenCLArrayContext)
 
-from meshmode.array_context import (
-    PyOpenCLArrayContext,
-    SingleGridWorkBalancingPytatoArrayContext as PytatoPyOpenCLArrayContext
-    #PytatoPyOpenCLArrayContext
-)
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
 from arraycontext import thaw, freeze, flatten, unflatten, to_numpy, from_numpy
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
@@ -107,12 +104,12 @@ class SingleLevelFilter(logging.Filter):
 
 h1 = logging.StreamHandler(sys.stdout)
 f1 = SingleLevelFilter(logging.INFO, False)
-h1.addFilter(f1)
+# h1.addFilter(f1)
 root_logger = logging.getLogger()
 root_logger.addHandler(h1)
 h2 = logging.StreamHandler(sys.stderr)
 f2 = SingleLevelFilter(logging.INFO, True)
-h2.addFilter(f2)
+# h2.addFilter(f2)
 root_logger.addHandler(h2)
 
 logger = logging.getLogger(__name__)
@@ -393,6 +390,9 @@ class InitACTII:
             if ytop_flat[inode] - ybottom_flat[inode] < throat_height:
                 throat_height = ytop_flat[inode] - ybottom_flat[inode]
                 throat_loc = xpos_flat[inode]
+            # temporary fix for parallel, needs to be reduced across partitions
+            throat_height = self._throat_height
+            throat_loc = self._x_throat
 
         #print(f"throat height {throat_height}")
         for inode in range(xpos_flat.size):
@@ -484,7 +484,8 @@ class InitACTII:
         # initially in pressure/temperature equilibrium with the exterior flow
         zeros = 0*xpos
         xc_left = zeros + 0.65163 - 0.000001
-        xc_right = zeros + 0.72163 + 0.000001
+        #xc_right = zeros + 0.72163 + 0.000001
+        xc_right = zeros + 0.73
         yc_top = zeros - 0.0083245
         yc_bottom = zeros - 0.0283245
         xc_bottom = zeros + 0.70163
@@ -686,9 +687,15 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         queue = cl.CommandQueue(cl_ctx)
 
     # main array context for the simulation
-    actx = actx_class(
-        queue,
-        allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    if actx_class == MPISingleGridWorkBalancingPytatoArrayContext:
+        actx = actx_class(comm,
+            queue,
+            mpi_base_tag=14000,
+            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    else:
+        actx = actx_class(
+            queue,
+            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
     # an array context for things that just can't lazy
     init_actx = PyOpenCLArrayContext(queue,
@@ -1004,7 +1011,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
         DTAG_BOUNDARY("outflow"): outflow,
-        DTAG_BOUNDARY("wall"): wall
+        DTAG_BOUNDARY("wall"): wall,
+        #DTAG_BOUNDARY("injection"): wall
     }
 
     viz_path = "viz_data/"
@@ -1428,7 +1436,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
 
 if __name__ == "__main__":
-    import sys
 
     logging.basicConfig(format="%(message)s", level=logging.INFO)
 
@@ -1466,7 +1473,7 @@ if __name__ == "__main__":
         actx_class = PyOpenCLProfilingArrayContext
     else:
         if args.lazy:
-            actx_class = PytatoPyOpenCLArrayContext
+            actx_class = MPISingleGridWorkBalancingPytatoArrayContext
         else:
             actx_class = PyOpenCLArrayContext
 

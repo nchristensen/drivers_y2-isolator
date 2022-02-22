@@ -1,1 +1,0 @@
-../isolator_injection.py

@@ -1,3 +1,5 @@
+SetFactory("OpenCASCADE");
+
 If(Exists(size))
     basesize=size;
 Else
@@ -8,6 +10,24 @@ If(Exists(blratio))
     boundratio=blratio;
 Else
     boundratio=1.0;
+EndIf
+
+If(Exists(blratiocavity))
+    boundratiocavity=blratiocavity;
+Else
+    boundratiocavity=2.0;
+EndIf
+
+If(Exists(blratioinjector))
+    boundratioinjector=blratioinjector;
+Else
+    boundratioinjector=2.0;
+EndIf
+
+If(Exists(injectorfac))
+    injector_factor=injectorfac;
+Else
+    injector_factor=10.0;
 EndIf
 
 // horizontal injection
@@ -21,7 +41,18 @@ inletsize = basesize*2;   // background mesh size upstream of the nozzle
 isosize = basesize;       // background mesh size in the isolator
 nozzlesize = basesize/2;       // background mesh size in the isolator
 cavitysize = basesize/2.; // background mesh size in the cavity region
-injectorsize = inj_t/20.; // background mesh size in the injector region
+injectorsize = inj_t/injector_factor; // background mesh size in the cavity region
+
+Printf("basesize = %f", basesize);
+Printf("inletsize = %f", inletsize);
+Printf("isosize = %f", isosize);
+Printf("nozzlesize = %f", nozzlesize);
+Printf("cavitysize = %f", cavitysize);
+Printf("injectorsize = %f", injectorsize);
+Printf("boundratio = %f", boundratio);
+Printf("boundratiocavity = %f", boundratiocavity);
+Printf("boundratioinjector = %f", boundratioinjector);
+
 
 //Top Wall
 //Point(1) = {0.2273,0.0270645,0.0,basesize};
@@ -454,10 +485,10 @@ Point(423) = {0.38328,-0.0083245,0.0,basesize};
 
 //Make Lines
 //Top
-BSpline(1000) = {1:212};  // goes clockwise
+Spline(1000) = {1:212};  // goes clockwise
 
 //Bottom Lines
-BSpline(1001) = {213:423}; // goes counter-clockwise
+Spline(1001) = {213:423}; // goes counter-clockwise
 
 //Mid-point on inlet
 Point(460) = {0.21, (0.0270645-0.0270645)/2.,0.0,2*basesize};
@@ -522,8 +553,8 @@ Curve Loop(1) = {
 -454, // post-cavity flat
 -453, // cavity rear upper (slant)
 -503, // injector top
--502, // injector inlet (slant)
--501, // injector bottom (slant)
+-502, // injector inlet
+-501, // injector bottom
 -500, // cavity rear lower (slant)
 -452, // cavity bottom
 -451, // cavity front
@@ -533,7 +564,7 @@ Curve Loop(1) = {
 
 Plane Surface(1) = {1};
 
-Physical Surface('domain') = {1};
+Physical Surface('domain') = {-1};
 
 Physical Curve('inflow') = {-423};
 Physical Curve('injection') = {-502};
@@ -575,7 +606,7 @@ Field[2].StopAtDistMax = 1;
 
 // Create distance field from curves, cavity only
 Field[11] = Distance;
-Field[11].CurvesList = {451:453};
+Field[11].CurvesList = {451:453, 500};
 Field[11].NumPointsPerCurve = 100000;
 
 //Create threshold field that varrries element size near boundaries
@@ -586,6 +617,20 @@ Field[12].SizeMax = cavitysize;
 Field[12].DistMin = 0.0002;
 Field[12].DistMax = 0.005;
 Field[12].StopAtDistMax = 1;
+
+// Create distance field from curves, injector only
+Field[13] = Distance;
+Field[13].CurvesList = {501, 503};
+Field[13].NumPointsPerCurve = 10000;
+
+//Create threshold field that varrries element size near boundaries
+Field[14] = Threshold;
+Field[14].InField = 13;
+Field[14].SizeMin = injectorsize / boundratioinjector;
+Field[14].SizeMax = injectorsize;
+Field[14].DistMin = 0.000001;
+Field[14].DistMax = 0.0005;
+Field[14].StopAtDistMax = 1;
 
 nozzle_start = 0.27;
 nozzle_end = 0.30;
@@ -632,8 +677,8 @@ Field[6].VOut = bigsize;
 // background mesh size for the injector
 injector_start = 0.69;
 injector_end = 0.75;
-injector_bottom = -0.0235;
-injector_top = -0.0225;
+injector_bottom = -0.0215;
+injector_top = -0.025;
 Field[7] = Box;
 Field[7].XMin = injector_start;
 Field[7].XMax = injector_end;
@@ -646,7 +691,7 @@ Field[7].VOut = bigsize;
 
 // take the minimum of all defined meshing fields
 Field[100] = Min;
-Field[100].FieldsList = {2, 3, 4, 5, 6, 7};
+Field[100].FieldsList = {2, 3, 4, 5, 6, 7, 12, 14};
 Background Field = 100;
 
 Mesh.MeshSizeExtendFromBoundary = 0;
