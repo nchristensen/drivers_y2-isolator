@@ -811,6 +811,16 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     total_temp_inj = 300.0
     mach_inj = 1.0
 
+    # parameters to adjust the shape of the initialization
+    #vel_sigma = 2000
+    #temp_sigma = 2500
+    vel_sigma = 1000
+    temp_sigma = 1250
+    # adjusted to match the mass flow rate
+    vel_sigma_inj = 5000
+    temp_sigma_inj = 5000
+    temp_wall = 300
+
     if user_input_file:
         input_data = None
         if rank == 0:
@@ -841,6 +851,22 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
             nspecies = int(input_data["nspecies"])
         except KeyError:
             pass
+        try:
+            vel_sigma = float(input_data["vel_sigma"])
+        except KeyError:
+            pass
+        try:
+            temp_sigma = float(input_data["temp_sigma"])
+        except KeyError:
+            pass
+        try:
+            vel_sigma_inj = float(input_data["vel_sigma_inj"])
+        except KeyError:
+            pass
+        try:
+            temp_sigma_inj = float(input_data["temp_sigma_inj"])
+        except KeyError:
+            pass
 
     if rank == 0:
         print("\n#### Simluation control data: ####")
@@ -850,8 +876,12 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
 
     if rank == 0:
         print("\n#### Simluation setup data: ####")
-        print(f"\ttotal_pres_inj = {total_pres_inj}")
-        print(f"\ttotal_temp_inj = {total_temp_inj}")
+        print(f"\ttotal_pres_injection = {total_pres_inj}")
+        print(f"\ttotal_temp_injection = {total_temp_inj}")
+        print(f"\tvel_sigma = {vel_sigma}")
+        print(f"\ttemp_sigma = {temp_sigma}")
+        print(f"\tvel_sigma_injection = {vel_sigma_inj}")
+        print(f"\ttemp_sigma_injection = {temp_sigma_inj}")
         print("#### Simluation setup data: ####")
 
     # }}}
@@ -1056,16 +1086,6 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     geometry_bottom = comm.bcast(geometry_bottom, root=0)
     geometry_top = comm.bcast(geometry_top, root=0)
 
-    # parameters to adjust the shape of the initialization
-    #vel_sigma = 2000
-    #temp_sigma = 2500
-    vel_sigma = 1000
-    temp_sigma = 1250
-    # adjusted to match the mass flow rate
-    vel_sigma_injection = 5000
-    temp_sigma_injection = 5000
-    temp_wall = 300
-
     inj_ymin = -0.0243245
     inj_ymax = -0.0227345
     bulk_init = InitACTII(dim=dim,
@@ -1077,8 +1097,8 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
                           inj_pres=total_pres_inj,
                           inj_temp=total_temp_inj,
                           inj_vel=vel_injection, inj_mass_frac=y_fuel,
-                          inj_temp_sigma=temp_sigma_injection,
-                          inj_vel_sigma=vel_sigma_injection,
+                          inj_temp_sigma=temp_sigma_inj,
+                          inj_vel_sigma=vel_sigma_inj,
                           inj_ytop=inj_ymax, inj_ybottom=inj_ymin,
                           inj_mach=mach_inj)
 

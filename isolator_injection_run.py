@@ -651,6 +651,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         mach = (actx.np.sqrt(np.dot(cv.velocity, cv.velocity)) /
                             dv.speed_of_sound)
+
+        from grudge.dt_utils import characteristic_lengthscales
+        length_scales = characteristic_lengthscales(cv.array_context, discr)
+
         viz_fields = [("cv", cv),
                       ("dv", dv),
                       ("mach", mach),
@@ -658,6 +662,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                       ("sponge_sigma", sponge_sigma),
                       ("alpha", alpha_field),
                       ("tagged_cells", tagged_cells),
+                      ("cl", length_scales),
                       ("dt" if constant_cfl else "cfl", ts_field)]
         # species mass fractions
         viz_fields.extend(
@@ -744,14 +749,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         if state.is_viscous:
             mu = state.viscosity
             # this appears to break lazy for whatever reason
-            """
             from mirgecom.viscous import get_local_max_species_diffusivity
             d_alpha_max = \
                 get_local_max_species_diffusivity(
                     state.array_context,
                     state.species_diffusivity
                 )
-             """
 
         return(
             length_scales / (state.wavespeed
