@@ -699,6 +699,26 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
          use_overintegration=False,
          actx_class=PyOpenCLArrayContext, casename=None):
+
+    # control log messages
+    logger = logging.getLogger(__name__)
+    logger.propagate = False
+
+    if (logger.hasHandlers()):
+        logger.handlers.clear()
+
+    # send info level messages to stdout
+    h1 = logging.StreamHandler(sys.stdout)
+    f1 = SingleLevelFilter(logging.INFO, False)
+    h1.addFilter(f1)
+    logger.addHandler(h1)
+
+    # send everything else to stderr
+    h2 = logging.StreamHandler(sys.stderr)
+    f2 = SingleLevelFilter(logging.INFO, True)
+    h2.addFilter(f2)
+    logger.addHandler(h2)
+
     """Drive the Y0 example."""
     cl_ctx = ctx_factory()
 
@@ -1058,7 +1078,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         local_nelements = local_mesh.nelements
 
     if rank == 0:
-        logging.info("Making discretization")
+        logger.info("Making discretization")
 
     #discr = EagerDGDiscretization(
         #actx, local_mesh, order=order, mpi_communicator=comm
@@ -1085,7 +1105,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         quadrature_tag = None
 
     if rank == 0:
-        logging.info("Done making discretization")
+        logger.info("Done making discretization")
 
     # initialize the sponge field
     sponge_thickness = 0.09
@@ -1122,11 +1142,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         logmgr.add_quantity(vis_timer)
 
     if rank == 0:
-        logging.info("Before restart/init")
+        logger.info("Before restart/init")
 
     if restart_filename:
         if rank == 0:
-            logging.info("Restarting soln.")
+            logger.info("Restarting soln.")
         current_cv = restart_data["cv"]
         if restart_order != order:
             restart_discr = EagerDGDiscretization(
@@ -1146,7 +1166,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     else:
         # Set the current state from time 0
         if rank == 0:
-            logging.info("Initializing soln.")
+            logger.info("Initializing soln.")
         current_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), actx),
                                   eos=eos, time=0)
 
@@ -1163,7 +1183,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                      constant_cfl=constant_cfl, initname=casename,
                                      eosname=eosname, casename=casename)
     if rank == 0:
-        logging.info(init_message)
+        logger.info(init_message)
 
     def my_write_status(dt, cfl, dv):
         status_msg = f"-------- dt = {dt:1.3e}, cfl = {cfl:1.4f}"
@@ -1189,7 +1209,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         status_msg += "\n"
 
         if rank == 0:
-            logging.info(status_msg)
+            logger.info(status_msg)
 
     def my_write_viz(step, t, cv, dv, ts_field, alpha_field):
         tagged_cells = smoothness_indicator(discr, cv.mass, s0=s0_sc,
@@ -1226,7 +1246,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         health_error = False
         if check_naninf_local(discr, "vol", dv.pressure):
             health_error = True
-            logging.info(f"{rank=}: NANs/Infs in pressure data.")
+            logger.info(f"{rank=}: NANs/Infs in pressure data.")
 
         if global_reduce(check_range_local(discr, "vol", dv.pressure,
                                      health_pres_min, health_pres_max),
@@ -1234,7 +1254,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             health_error = True
             p_min = actx.to_numpy(nodal_min(discr, "vol", dv.pressure))
             p_max = actx.to_numpy(nodal_max(discr, "vol", dv.pressure))
-            logging.info(f"Pressure range violation ({p_min=}, {p_max=})")
+            logger.info(f"Pressure range violation ({p_min=}, {p_max=})")
 
         return health_error
 
@@ -1351,7 +1371,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                 health_errors = global_reduce(my_health_check(dv), op="lor")
                 if health_errors:
                     if rank == 0:
-                        logging.warning("Fluid solution failed health check.")
+                        logger.warning("Fluid solution failed health check.")
                     raise MyRuntimeError("Failed simulation health check.")
 
             if do_status:
@@ -1366,7 +1386,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         except MyRuntimeError:
             if rank == 0:
-                logging.error("Errors detected; attempting graceful exit.")
+                logger.error("Errors detected; attempting graceful exit.")
             my_write_viz(step=step, t=t, cv=cv, dv=dv, ts_field=ts_field,
                          alpha_field=alpha_field)
             my_write_restart(step=step, t=t, cv=cv)
@@ -1415,7 +1435,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     # Dump the final data
     if rank == 0:
-        logging.info("Checkpointing final state ...")
+        logger.info("Checkpointing final state ...")
     final_dv = current_state.dv
     alpha_field = my_get_alpha(discr, current_state, alpha_sc)
     ts_field, cfl, dt = my_get_timestep(t=current_t, dt=current_dt,
@@ -1437,29 +1457,17 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
 if __name__ == "__main__":
 
-    #logging.basicConfig(format="%(message)s", level=logging.INFO)
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        level=logging.INFO)
 
-    root_logger = logging.getLogger()
+    #root_logger = logging.getLogger()
 
-    #h1 = logging.StreamHandler(sys.stdout)
-    #f1 = SingleLevelFilter(logging.INFO, False)
-    #h1.addFilter(f1)
-    #root_logger.addHandler(h1)
-
-    #h2 = logging.StreamHandler(sys.stderr)
-    #f2 = SingleLevelFilter(logging.DEBUG, True)
-    #h2.addFilter(f2)
-    #root_logger.addHandler(h2)
-
-    root_logger.setLevel(logging.INFO)
-    #logger = logging.getLogger(__name__)
-    #logger.setLevel(logging.DEBUG)
-    #logger.setLevel(logging.INFO)
-    logging.debug("A DEBUG message")
-    logging.info("An INFO message")
-    logging.warning("A WARNING message")
-    logging.error("An ERROR message")
-    logging.critical("A CRITICAL message")
+    #logging.debug("A DEBUG message")
+    #logging.info("An INFO message")
+    #logging.warning("A WARNING message")
+    #logging.error("An ERROR message")
+    #logging.critical("A CRITICAL message")
 
     import argparse
     parser = argparse.ArgumentParser(
