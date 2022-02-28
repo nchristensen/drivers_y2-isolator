@@ -43,20 +43,17 @@ from grudge.array_context import (MPISingleGridWorkBalancingPytatoArrayContext,
                                   PyOpenCLArrayContext)
 
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
-from arraycontext import thaw, freeze, flatten, unflatten, to_numpy, from_numpy
+from arraycontext import thaw, freeze
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
 from grudge.shortcuts import make_visualizer
 from grudge.dof_desc import DTAG_BOUNDARY
 from grudge.op import nodal_max, nodal_min
 from logpyle import IntervalTimer, set_dt
-from mirgecom.euler import extract_vars_for_logging, units_for_logging
 from mirgecom.logging_quantities import (
     initialize_logmgr,
-    logmgr_add_many_discretization_quantities,
     logmgr_add_cl_device_info,
     logmgr_set_time,
-    LogUserQuantity,
     set_sim_state
 )
 
@@ -102,18 +99,22 @@ class SingleLevelFilter(logging.Filter):
             return (record.levelno == self.passlevel)
 
 
-h1 = logging.StreamHandler(sys.stdout)
-f1 = SingleLevelFilter(logging.INFO, False)
-# h1.addFilter(f1)
-root_logger = logging.getLogger()
-root_logger.addHandler(h1)
-h2 = logging.StreamHandler(sys.stderr)
-f2 = SingleLevelFilter(logging.INFO, True)
-# h2.addFilter(f2)
-root_logger.addHandler(h2)
+#root_logger = logging.getLogger()
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+#h1 = logging.StreamHandler(sys.stdout)
+#f1 = SingleLevelFilter(logging.INFO, False)
+#h1.addFilter(f1)
+#root_logger.addHandler(h1)
+
+#h2 = logging.StreamHandler(sys.stderr)
+#f2 = SingleLevelFilter(logging.DEBUG, True)
+#h2.addFilter(f2)
+#root_logger.addHandler(h2)
+
+#root_logger.setLevel(logging.DEBUG)
+#logger = logging.getLogger(__name__)
+#logger.setLevel(logging.DEBUG)
+#logger.setLevel(logging.INFO)
 #logger.debug("A DEBUG message")
 #logger.info("An INFO message")
 #logger.warning("A WARNING message")
@@ -365,55 +366,91 @@ class InitACTII:
         zeros = 0*xpos
         ones = zeros + 1.0
 
-        xpos_flat = to_numpy(flatten(xpos, actx), actx)
-        ypos_flat = to_numpy(flatten(ypos, actx), actx)
         gamma = eos.gamma()
         gas_const = eos.gas_const()
 
-        ytop_flat = 0*xpos_flat
-        ybottom_flat = 0*xpos_flat
-        theta_top_flat = 0*xpos_flat
-        theta_bottom_flat = 0*xpos_flat
-        mach_flat = 0*xpos_flat
-        theta_flat = 0*xpos_flat
-        throat_height = 1
+        mach = zeros
+        ytop = zeros
+        ybottom = zeros
+        theta = zeros
 
         theta_geom_top = get_theta_from_data(self._geom_top)
         theta_geom_bottom = get_theta_from_data(self._geom_bottom)
 
-        for inode in range(xpos_flat.size):
-            ytop_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_top)
-            ybottom_flat[inode] = get_y_from_x(xpos_flat[inode], self._geom_bottom)
-            theta_top_flat[inode] = get_y_from_x(xpos_flat[inode], theta_geom_top)
-            theta_bottom_flat[inode] = get_y_from_x(xpos_flat[inode],
-                                                    theta_geom_bottom)
-            if ytop_flat[inode] - ybottom_flat[inode] < throat_height:
-                throat_height = ytop_flat[inode] - ybottom_flat[inode]
-                throat_loc = xpos_flat[inode]
-            # temporary fix for parallel, needs to be reduced across partitions
-            throat_height = self._throat_height
-            throat_loc = self._x_throat
+        # process the mesh piecemeal, one interval at a time
+        # linearly interpolate between the data points
+        area_ratio = ((self._geom_top[0][1] - self._geom_bottom[0][1]) /
+                      self._throat_height)
+        if self._geom_top[0][0] < self._x_throat:
+            mach_left = getMachFromAreaRatio(area_ratio=area_ratio,
+                                             gamma=gamma,
+                                             mach_guess=0.01)
+        elif self._geom_top[0][0] > self._x_throat:
+            mach_left = getMachFromAreaRatio(area_ratio=area_ratio,
+                                             gamma=gamma,
+                                             mach_guess=1.01)
+        else:
+            mach_left = 1.0
+        x_left = self._geom_top[0][0]
+        ytop_left = self._geom_top[0][1]
+        ybottom_left = self._geom_bottom[0][1]
+        theta_top_left = theta_geom_top[0][1]
+        theta_bottom_left = theta_geom_bottom[0][1]
 
-        #print(f"throat height {throat_height}")
-        for inode in range(xpos_flat.size):
-            area_ratio = (ytop_flat[inode] - ybottom_flat[inode])/throat_height
-            theta_flat[inode] = (theta_bottom_flat[inode] +
-                          (theta_top_flat[inode]-theta_bottom_flat[inode]) /
-                          (ytop_flat[inode]-ybottom_flat[inode]) *
-                          (ypos_flat[inode] - ybottom_flat[inode]))
-            if xpos_flat[inode] < throat_loc:
-                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio,
-                                                        gamma=gamma, mach_guess=0.01)
-            elif xpos_flat[inode] > throat_loc:
-                mach_flat[inode] = getMachFromAreaRatio(area_ratio=area_ratio,
-                                                        gamma=gamma, mach_guess=1.01)
+        for ind in range(1, self._geom_top.shape[0]):
+            area_ratio = ((self._geom_top[ind][1] - self._geom_bottom[ind][1]) /
+                          self._throat_height)
+            if self._geom_top[ind][0] < self._x_throat:
+                mach_right = getMachFromAreaRatio(area_ratio=area_ratio,
+                                                 gamma=gamma,
+                                                 mach_guess=0.01)
+            elif self._geom_top[ind][0] > self._x_throat:
+                mach_right = getMachFromAreaRatio(area_ratio=area_ratio,
+                                                 gamma=gamma,
+                                                 mach_guess=1.01)
             else:
-                mach_flat[inode] = 1.0
+                mach_right = 1.0
+            ytop_right = self._geom_top[ind][1]
+            ybottom_right = self._geom_bottom[ind][1]
+            theta_top_right = theta_geom_top[ind][1]
+            theta_bottom_right = theta_geom_bottom[ind][1]
 
-        ytop = unflatten(xpos, from_numpy(ytop_flat, actx), actx)
-        ybottom = unflatten(xpos, from_numpy(ybottom_flat, actx), actx)
-        mach = unflatten(xpos, from_numpy(mach_flat, actx), actx)
-        theta = unflatten(xpos, from_numpy(theta_flat, actx), actx)
+            # interpolate our data
+            x_right = self._geom_top[ind][0]
+
+            dx = x_right - x_left
+            dm = mach_right - mach_left
+            dyt = ytop_right - ytop_left
+            dyb = ybottom_right - ybottom_left
+            dtb = theta_bottom_right - theta_bottom_left
+            dtt = theta_top_right - theta_top_left
+
+            local_mach = mach_left + (xpos - x_left)*dm/dx
+            local_ytop = ytop_left + (xpos - x_left)*dyt/dx
+            local_ybottom = ybottom_left + (xpos - x_left)*dyb/dx
+            local_theta_bottom = theta_bottom_left + (xpos - x_left)*dtb/dx
+            local_theta_top = theta_top_left + (xpos - x_left)*dtt/dx
+
+            local_theta = (local_theta_bottom +
+                           (local_theta_top - local_theta_bottom) /
+                           (local_ytop - local_ybottom)*(ypos - local_ybottom))
+
+            # extend just a a little bit to catch the edges
+            left_edge = actx.np.greater(xpos, x_left - 1.e-6)
+            right_edge = actx.np.less(xpos, x_right + 1.e-6)
+            inside_block = left_edge*right_edge
+
+            mach = actx.np.where(inside_block, local_mach, mach)
+            ytop = actx.np.where(inside_block, local_ytop, ytop)
+            ybottom = actx.np.where(inside_block, local_ybottom, ybottom)
+            theta = actx.np.where(inside_block, local_theta, theta)
+
+            mach_left = mach_right
+            ytop_left = ytop_right
+            ybottom_left = ybottom_right
+            theta_bottom_left = theta_bottom_right
+            theta_top_left = theta_top_right
+            x_left = x_right
 
         pressure = getIsentropicPressure(
             mach=mach,
@@ -697,16 +734,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             queue,
             allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
-    # an array context for things that just can't lazy
-    init_actx = PyOpenCLArrayContext(queue,
-        allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
-
     # default i/o junk frequencies
     nviz = 500
     nhealth = 1
     nrestart = 5000
     nstatus = 1
-    log_dependent = 0
 
     # default timestepping control
     integrator = "rk4"
@@ -752,10 +784,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             pass
         try:
             nstatus = int(input_data["nstatus"])
-        except KeyError:
-            pass
-        try:
-            log_dependent = int(input_data["log_dependent"])
         except KeyError:
             pass
         try:
@@ -826,11 +854,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         print(f"\torder = {order}")
         print(f"\tdimen = {dim}")
         print(f"\tTime integration {integrator}")
-        if log_dependent:
-            print("\tDependent variable logging is ON.")
-            print("\tWARNING: This may be a performance drag in lazy mode")
-        else:
-            print("\tDependent variable logging is OFF.")
         print("#### Simluation control data: ####\n")
 
     timestepper = rk4_step
@@ -1002,17 +1025,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     inflow = PrescribedFluidBoundary(boundary_state_func=_inflow_state_func)
     outflow = PrescribedFluidBoundary(boundary_state_func=_outflow_state_func)
-    # Don't work with AV
-    #inflow = PrescribedViscousBoundary(q_func=inflow_init)
-    #outflow = PrescribedViscousBoundary(q_func=outflow_init)
     wall = IsothermalNoSlipBoundary()
-    #wall = AdiabaticNoslipMovingBoundary()
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): inflow,
         DTAG_BOUNDARY("outflow"): outflow,
         DTAG_BOUNDARY("wall"): wall,
-        #DTAG_BOUNDARY("injection"): wall
     }
 
     viz_path = "viz_data/"
@@ -1077,12 +1095,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     sponge_init = InitSponge(x0=sponge_x0, thickness=sponge_thickness,
                              amplitude=sponge_amp)
     sponge_sigma = sponge_init(x_vec=thaw(discr.nodes(), actx))
-    ref_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx),
+    ref_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), actx),
                        eos=eos, time=0)
-    ref_cv = thaw(freeze(ref_cv, init_actx), actx)
 
     vis_timer = None
-    log_cfl = LogUserQuantity(name="cfl", value=current_cfl)
 
     if logmgr:
         logmgr_add_cl_device_info(logmgr, queue)
@@ -1104,19 +1120,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         vis_timer = IntervalTimer("t_vis", "Time spent visualizing")
         logmgr.add_quantity(vis_timer)
-
-        if log_dependent:
-            logmgr_add_many_discretization_quantities(logmgr, discr, dim,
-                                                      extract_vars_for_logging,
-                                                      units_for_logging)
-
-            logmgr.add_quantity(log_cfl, interval=nstatus)
-            logmgr.add_watches([
-                ("cfl.max", ", cfl = {value:1.4f}\n"),
-                ("min_pressure", "------- P (min, max) (Pa) = ({value:1.9e}, "),
-                ("max_pressure", "{value:1.9e})\n"),
-                ("min_temperature", "------- T (min, max) (K)  = ({value:7g}, "),
-                ("max_temperature", "{value:7g})\n")])
 
     if rank == 0:
         logging.info("Before restart/init")
@@ -1144,9 +1147,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         # Set the current state from time 0
         if rank == 0:
             logging.info("Initializing soln.")
-        current_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), init_actx),
+        current_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), actx),
                                   eos=eos, time=0)
-        current_cv = thaw(freeze(current_cv, init_actx), actx)
 
     current_state = make_fluid_state(current_cv, gas_model)
 
@@ -1161,7 +1163,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                      constant_cfl=constant_cfl, initname=casename,
                                      eosname=eosname, casename=casename)
     if rank == 0:
-        logger.info(init_message)
+        logging.info(init_message)
 
     def my_write_status(dt, cfl, dv):
         status_msg = f"-------- dt = {dt:1.3e}, cfl = {cfl:1.4f}"
@@ -1187,7 +1189,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         status_msg += "\n"
 
         if rank == 0:
-            logger.info(status_msg)
+            logging.info(status_msg)
 
     def my_write_viz(step, t, cv, dv, ts_field, alpha_field):
         tagged_cells = smoothness_indicator(discr, cv.mass, s0=s0_sc,
@@ -1224,7 +1226,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         health_error = False
         if check_naninf_local(discr, "vol", dv.pressure):
             health_error = True
-            logger.info(f"{rank=}: NANs/Infs in pressure data.")
+            logging.info(f"{rank=}: NANs/Infs in pressure data.")
 
         if global_reduce(check_range_local(discr, "vol", dv.pressure,
                                      health_pres_min, health_pres_max),
@@ -1232,7 +1234,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             health_error = True
             p_min = actx.to_numpy(nodal_min(discr, "vol", dv.pressure))
             p_max = actx.to_numpy(nodal_max(discr, "vol", dv.pressure))
-            logger.info(f"Pressure range violation ({p_min=}, {p_max=})")
+            logging.info(f"Pressure range violation ({p_min=}, {p_max=})")
 
         return health_error
 
@@ -1339,8 +1341,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
             alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
             ts_field, cfl, dt = my_get_timestep(t, dt, fluid_state, alpha_field)
-            if log_dependent:
-                log_cfl.set_quantity(cfl)
 
             do_viz = check_step(step=step, interval=nviz)
             do_restart = check_step(step=step, interval=nrestart)
@@ -1351,10 +1351,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                 health_errors = global_reduce(my_health_check(dv), op="lor")
                 if health_errors:
                     if rank == 0:
-                        logger.warning("Fluid solution failed health check.")
+                        logging.warning("Fluid solution failed health check.")
                     raise MyRuntimeError("Failed simulation health check.")
 
-            if do_status and (log_dependent == 0):
+            if do_status:
                 my_write_status(dt=dt, cfl=cfl, dv=dv)
 
             if do_restart:
@@ -1366,7 +1366,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         except MyRuntimeError:
             if rank == 0:
-                logger.error("Errors detected; attempting graceful exit.")
+                logging.error("Errors detected; attempting graceful exit.")
             my_write_viz(step=step, t=t, cv=cv, dv=dv, ts_field=ts_field,
                          alpha_field=alpha_field)
             my_write_restart(step=step, t=t, cv=cv)
@@ -1415,7 +1415,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     # Dump the final data
     if rank == 0:
-        logger.info("Checkpointing final state ...")
+        logging.info("Checkpointing final state ...")
     final_dv = current_state.dv
     alpha_field = my_get_alpha(discr, current_state, alpha_sc)
     ts_field, cfl, dt = my_get_timestep(t=current_t, dt=current_dt,
@@ -1437,7 +1437,29 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
 if __name__ == "__main__":
 
-    logging.basicConfig(format="%(message)s", level=logging.INFO)
+    #logging.basicConfig(format="%(message)s", level=logging.INFO)
+
+    root_logger = logging.getLogger()
+
+    #h1 = logging.StreamHandler(sys.stdout)
+    #f1 = SingleLevelFilter(logging.INFO, False)
+    #h1.addFilter(f1)
+    #root_logger.addHandler(h1)
+
+    #h2 = logging.StreamHandler(sys.stderr)
+    #f2 = SingleLevelFilter(logging.DEBUG, True)
+    #h2.addFilter(f2)
+    #root_logger.addHandler(h2)
+
+    root_logger.setLevel(logging.INFO)
+    #logger = logging.getLogger(__name__)
+    #logger.setLevel(logging.DEBUG)
+    #logger.setLevel(logging.INFO)
+    logging.debug("A DEBUG message")
+    logging.info("An INFO message")
+    logging.warning("A WARNING message")
+    logging.error("An ERROR message")
+    logging.critical("A CRITICAL message")
 
     import argparse
     parser = argparse.ArgumentParser(
