@@ -95,25 +95,6 @@ class SingleLevelFilter(logging.Filter):
             return (record.levelno == self.passlevel)
 
 
-h1 = logging.StreamHandler(sys.stdout)
-f1 = SingleLevelFilter(logging.INFO, False)
-h1.addFilter(f1)
-root_logger = logging.getLogger()
-root_logger.addHandler(h1)
-h2 = logging.StreamHandler(sys.stderr)
-f2 = SingleLevelFilter(logging.INFO, True)
-h2.addFilter(f2)
-root_logger.addHandler(h2)
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-#logger.debug("A DEBUG message")
-#logger.info("An INFO message")
-#logger.warning("A WARNING message")
-#logger.error("An ERROR message")
-#logger.critical("A CRITICAL message")
-
-
 class MyRuntimeError(RuntimeError):
     """Simple exception to kill the simulation."""
 
@@ -185,6 +166,25 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
          use_overintegration=False,
          actx_class=PyOpenCLArrayContext, casename=None):
+
+    # control log messages
+    logger = logging.getLogger(__name__)
+    logger.propagate = False
+
+    if (logger.hasHandlers()):
+        logger.handlers.clear()
+
+    # send info level messages to stdout
+    h1 = logging.StreamHandler(sys.stdout)
+    f1 = SingleLevelFilter(logging.INFO, False)
+    h1.addFilter(f1)
+    logger.addHandler(h1)
+
+    # send everything else to stderr
+    h2 = logging.StreamHandler(sys.stderr)
+    f2 = SingleLevelFilter(logging.INFO, True)
+    h2.addFilter(f2)
+    logger.addHandler(h2)
 
     cl_ctx = ctx_factory()
 
@@ -948,9 +948,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
 
 if __name__ == "__main__":
-    import sys
 
-    logging.basicConfig(format="%(message)s", level=logging.INFO)
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        level=logging.INFO)
 
     import argparse
     parser = argparse.ArgumentParser(
