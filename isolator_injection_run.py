@@ -250,6 +250,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     # material properties
     mu = 1.0e-5
+    spec_diff = 1e-4
     mu_override = False  # optionally read in from input
     nspecies = 0
 
@@ -298,6 +299,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         try:
             mu_input = float(input_data["mu"])
             mu_override = True
+        except KeyError:
+            pass
+        try:
+            spec_diff = float(input_data["spec_diff"])
         except KeyError:
             pass
         try:
@@ -406,6 +411,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         print(f"\tkappa = {kappa}")
         print(f"\tPrandtl Number  = {Pr}")
         print(f"\tnspecies = {nspecies}")
+        print(f"\tspecies diffusivity = {spec_diff}")
         if nspecies == 0:
             print("\tno passive scalars, uniform ideal gas eos")
         elif nspecies == 2:
@@ -414,7 +420,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             print("\tfull multi-species initialization with pyrometheus eos")
 
     #spec_diffusivity = 0. * np.ones(nspecies)
-    spec_diffusivity = 1e-4 * np.ones(nspecies)
+    spec_diffusivity = spec_diff * np.ones(nspecies)
     transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa,
                                       species_diffusivity=spec_diffusivity)
 
@@ -652,9 +658,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         mach = (actx.np.sqrt(np.dot(cv.velocity, cv.velocity)) /
                             dv.speed_of_sound)
 
-        from grudge.dt_utils import characteristic_lengthscales
-        length_scales = characteristic_lengthscales(cv.array_context, discr)
-
         viz_fields = [("cv", cv),
                       ("dv", dv),
                       ("mach", mach),
@@ -662,7 +665,6 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                       ("sponge_sigma", sponge_sigma),
                       ("alpha", alpha_field),
                       ("tagged_cells", tagged_cells),
-                      ("cl", length_scales),
                       ("dt" if constant_cfl else "cfl", ts_field)]
         # species mass fractions
         viz_fields.extend(
@@ -743,11 +745,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         length_scales = characteristic_lengthscales(state.array_context, discr)
 
-        mu = 0
+        nu = 0
         d_alpha_max = 0
 
         if state.is_viscous:
-            mu = state.viscosity
+            nu = state.viscosity/state.mass_density
             # this appears to break lazy for whatever reason
             from mirgecom.viscous import get_local_max_species_diffusivity
             d_alpha_max = \
@@ -758,7 +760,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         return(
             length_scales / (state.wavespeed
-            + ((mu + d_alpha_max + alpha) / length_scales))
+            + ((nu + d_alpha_max + alpha) / length_scales))
         )
 
     def my_get_viscous_cfl(discr, dt, state, alpha):

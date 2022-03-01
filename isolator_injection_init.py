@@ -1137,6 +1137,7 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
         viz_fields = [("cv", cv),
                       ("dv", dv),
                       ("mach", mach),
+                      ("rank", rank),
                       ("velocity", cv.velocity)]
         # species mass fractions
         viz_fields.extend(

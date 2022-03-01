@@ -1279,12 +1279,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         length_scales = characteristic_lengthscales(state.array_context, discr)
 
-        mu = 0
+        nu = 0
         d_alpha_max = 0
 
         if state.is_viscous:
             from mirgecom.viscous import get_local_max_species_diffusivity
-            mu = state.viscosity
+            nu = state.viscosity/state.mass_density
             d_alpha_max = \
                 get_local_max_species_diffusivity(
                     state.array_context,
@@ -1293,7 +1293,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         return(
             length_scales / (state.wavespeed
-            + ((mu + d_alpha_max + alpha) / length_scales))
+            + ((nu + d_alpha_max + alpha) / length_scales))
         )
 
     def my_get_viscous_cfl(discr, dt, state, alpha):
