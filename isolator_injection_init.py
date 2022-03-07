@@ -38,8 +38,6 @@ import pyopencl.array as cla  # noqa
 import math
 from functools import partial
 
-from grudge.array_context import (MPISingleGridWorkBalancingPytatoArrayContext,
-                                  PyOpenCLArrayContext)
 from arraycontext import thaw
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
@@ -747,9 +745,11 @@ class InitACTII:
 
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, user_input_file=None,
-         use_overintegration=False,
-         actx_class=PyOpenCLArrayContext,
-         casename=None):
+         use_overintegration=False, actx_class=None, casename=None,
+         lazy=False):
+
+    if actx_class is None:
+        raise RuntimeError("Array context class missing.")
 
     # control log messages
     logger = logging.getLogger(__name__)
@@ -786,13 +786,12 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     queue = cl.CommandQueue(cl_ctx)
 
     # main array context for the simulation
-    if actx_class == MPISingleGridWorkBalancingPytatoArrayContext:
-        actx = actx_class(comm, queue, mpi_base_tag=14000,
-            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    if lazy:
+        actx = actx_class(comm, queue, mpi_base_tag=12000)
     else:
-        actx = actx_class(
-            queue,
-            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+        actx = actx_class(comm, queue,
+                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
+                force_device_scalars=True)
 
     # discretization and model control
     order = 1
@@ -1184,6 +1183,7 @@ if __name__ == "__main__":
                         help="enable lazy evaluation [OFF]")
 
     args = parser.parse_args()
+    lazy = args.lazy
 
     # for writing output
     casename = "isolator_init"
@@ -1193,10 +1193,8 @@ if __name__ == "__main__":
     else:
         print(f"Default casename {casename}")
 
-    if args.lazy:
-        actx_class = MPISingleGridWorkBalancingPytatoArrayContext
-    else:
-        actx_class = PyOpenCLArrayContext
+    from grudge.array_context import get_reasonable_array_context_class
+    actx_class = get_reasonable_array_context_class(lazy=lazy, distributed=True)
 
     input_file = None
     if args.input_file:
@@ -1206,6 +1204,7 @@ if __name__ == "__main__":
         print("No user input file, using default values")
 
     print(f"Running {sys.argv[0]}\n")
-    main(user_input_file=input_file, actx_class=actx_class, casename=casename)
+    main(user_input_file=input_file, actx_class=actx_class, casename=casename,
+         lazy=lazy)
 
 # vim: foldmethod=marker

@@ -39,9 +39,6 @@ import math
 from pytools.obj_array import make_obj_array
 from functools import partial
 
-from grudge.array_context import (MPIPytatoPyOpenCLArrayContext,
-                                  PyOpenCLArrayContext)
-from mirgecom.profiling import PyOpenCLProfilingArrayContext
 from arraycontext import thaw, freeze, flatten, unflatten, to_numpy, from_numpy
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
@@ -1062,9 +1059,12 @@ class UniformModified:
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
-         use_overintegration=False,
-         actx_class=PyOpenCLArrayContext, casename=None):
+         use_overintegration=False, actx_class=None, casename=None,
+         lazy=False):
     """Drive the Y0 example."""
+    if actx_class is None:
+        raise RuntimeError("Array context class missing.")
+
     cl_ctx = ctx_factory()
 
     from mpi4py import MPI
@@ -1088,18 +1088,15 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     else:
         queue = cl.CommandQueue(cl_ctx)
 
-    # main array context for the simulation
-    if actx_class == MPIPytatoPyOpenCLArrayContext:
-                actx = actx_class(comm,
-                    queue,
-                    mpi_base_tag=14000,
-                    allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    if lazy:
+        actx = actx_class(comm, queue, mpi_base_tag=12000)
     else:
-        actx = actx_class(
-            queue,
-            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+        actx = actx_class(comm, queue,
+                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
+                force_device_scalars=True)
 
     # an array context for things that just can't lazy
+    from grudge.array_context import PyOpenCLArrayContext
     init_actx = PyOpenCLArrayContext(queue,
         allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
 
@@ -1960,15 +1957,13 @@ if __name__ == "__main__":
     else:
         print(f"Default casename {casename}")
 
+    lazy = args.lazy
     if args.profile:
-        if args.lazy:
+        if lazy:
             raise ValueError("Can't use lazy and profiling together.")
-        actx_class = PyOpenCLProfilingArrayContext
-    else:
-        if args.lazy:
-            actx_class = MPIPytatoPyOpenCLArrayContext
-        else:
-            actx_class = PyOpenCLArrayContext
+
+    from grudge.array_context import get_reasonable_array_context_class
+    actx_class = get_reasonable_array_context_class(lazy=lazy, distributed=True)
 
     restart_filename = None
     if args.restart_file:
@@ -1985,7 +1980,7 @@ if __name__ == "__main__":
     print(f"Running {sys.argv[0]}\n")
     main(restart_filename=restart_filename, user_input_file=input_file,
          use_profiling=args.profile, use_logmgr=args.log,
-         use_overintegration=args.overintegration,
+         use_overintegration=args.overintegration, lazy=lazy,
          actx_class=actx_class, casename=casename)
 
 # vim: foldmethod=marker
