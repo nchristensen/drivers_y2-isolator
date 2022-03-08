@@ -41,7 +41,8 @@ def simpleSlice(
   # Open XDMF
   #data = XDMFReader(FileNames=[solutionFile])
   data = XMLPartitionedUnstructuredGridReader(FileName=[solutionFile])
-  data.PointArrayStatus = ['cv_mass', 'cv_energy', 'cv_momentum', 'dv_temperature', 'dv_pressure', 'mach', 'velocity', 'sponge_sigma', 'alpha', 'tagged_cells', 'cfl']
+  #data.PointArrayStatus = ['cv_mass', 'cv_energy', 'cv_momentum', 'dv_temperature', 'dv_pressure', 'mach', 'velocity', 'sponge_sigma', 'alpha', 'tagged_cells', 'cfl']
+  data.PointArrayStatus = ['cv_mass', 'cv_energy', 'cv_momentum', 'dv_temperature', 'dv_pressure', 'mach', 'velocity', 'sponge_sigma', 'alpha', 'tagged_cells', 'cfl', 'Y_air', 'Y_fuel']
   readTime = time.time() - t0
 
   # Properties modified on data
