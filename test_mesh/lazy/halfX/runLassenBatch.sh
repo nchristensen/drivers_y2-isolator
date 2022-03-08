@@ -2,7 +2,7 @@
 #BSUB -nnodes 2
 #BSUB -G uiuc
 #BSUB -W 120
-#BSUB -J Y2_iso_3d_halfX
+#BSUB -J Y2_iso_3d_halfX_lz
 #BSUB -q pdebug
 #BSUB -o runOutput.txt
 #BSUB -e runOutput.txt
