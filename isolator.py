@@ -1517,7 +1517,7 @@ if __name__ == "__main__":
     input_file = None
     if args.input_file:
         input_file = args.input_file.replace("'", "")
-        print(f"Ignoring user input from file: {input_file}")
+        print(f"Using user input from file: {input_file}")
     else:
         print("No user input file, using default values")
 
