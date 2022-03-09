@@ -124,13 +124,10 @@ class MyRuntimeError(RuntimeError):
     pass
 
 
-def get_mesh(dim, read_mesh=True):
+def get_mesh(dim, mesh_filename, read_mesh=True):
     """Get the mesh."""
     from meshmode.mesh.io import read_gmsh
-    mesh_filename = "data/isolator.msh"
-    #mesh = read_gmsh(mesh_filename, force_ambient_dim=dim)
     mesh = partial(read_gmsh, filename=mesh_filename, force_ambient_dim=dim)
-    #mesh = read_gmsh(mesh_filename)
 
     return mesh
 
@@ -784,6 +781,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     s0_sc = -5.0
     kappa_sc = 0.5
     dim = 2
+    mesh_filename = "data/isolator.msh"
 
     # material properties
     mu = 1.0e-5
@@ -854,6 +852,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             pass
         try:
             health_pres_max = float(input_data["health_pres_max"])
+        except KeyError:
+            pass
+        try:
+            mesh_filename = input_data["mesh_filename"]
         except KeyError:
             pass
 
@@ -1078,17 +1080,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
         assert restart_data["nparts"] == nparts
     else:  # generate the grid from scratch
+        if rank == 0:
+            print(f"Reading mesh from {mesh_filename}")
         local_mesh, global_nelements = generate_and_distribute_mesh(
-            comm, get_mesh(dim=dim))
+            comm, get_mesh(dim=dim, mesh_filename=mesh_filename))
         local_nelements = local_mesh.nelements
 
     if rank == 0:
         logger.info("Making discretization")
-
-    #discr = EagerDGDiscretization(
-        #actx, local_mesh, order=order, mpi_communicator=comm
-#
-    #)
 
     from grudge.dof_desc import DISCR_TAG_BASE, DISCR_TAG_QUAD
     from meshmode.discretization.poly_element import \
