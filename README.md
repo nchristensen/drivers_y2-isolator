@@ -73,3 +73,32 @@ Most subdirectories contain a run.sh script that outlines how to run the problem
 
 The case can the be run similar to other MIRGE-Com applications.
 For examples see the MIRGE-Com [documentation](https://mirgecom.readthedocs.io/en/latest/running/systems.html)
+
+Notes for running with multispecies:
+
+Some multispecies tests are in the following directories:
+```
+smoke_test_injection_2d
+smoke_test_injection_3d
+```
+
+The 3D multispecies tests are currently the best approximation to the expected Y2 prediction workload.  The
+general procedure for preparing and running the tests in these directories is as follows:
+1. Generate the mesh
+```
+cd data&&./make_mesh.sh
+```
+2. Choose inert or with combustion:
+```
+ln -sf run_params_combustion.yaml run_params.yaml
+-or-
+ln -sf run_params_inert.yaml run_params.yaml
+```
+3. Initialize the case solution (make sure to run this on the same number of ranks as you plan to run):
+```
+run_init.sh
+```
+4. Run the simulation by restarting from the init'd soln:
+```
+run.sh
+```
