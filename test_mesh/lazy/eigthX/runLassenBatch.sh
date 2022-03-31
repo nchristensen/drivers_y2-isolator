@@ -7,7 +7,7 @@
 #BSUB -o runOutput.txt
 #BSUB -e runOutput.txt
 
-module load gcc/7.3.1
+module load gcc/8.3.1
 module load spectrum-mpi
 conda deactivate
 conda activate mirgeDriver.Y2isolator
