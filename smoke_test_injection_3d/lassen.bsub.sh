@@ -43,5 +43,9 @@ echo "----------------------------"
 # Run application
 # -O: switch on optimizations
 # POCL_CACHE_DIR=...: each rank needs its own POCL cache dir
-$jsrun_cmd bash -c 'POCL_CACHE_DIR=$POCL_CACHE_DIR_ROOT/$$ python -m mpi4py isolator_injection_init.py -i run_params.yaml'
+
+# isolator_injection_init.py must be run with the same config as isolator_injection_run.py, in particular:
+# - same numbers of ranks in both cases
+# - lazy runs need a lazy init
+$jsrun_cmd bash -c 'POCL_CACHE_DIR=$POCL_CACHE_DIR_ROOT/$$ python -m mpi4py isolator_injection_init.py -i run_params.yaml --lazy'
 $jsrun_cmd bash -c 'POCL_CACHE_DIR=$POCL_CACHE_DIR_ROOT/$$ python -m mpi4py isolator_injection_run.py -r restart_data/isolator_init-000000 -i run_params.yaml --lazy'
