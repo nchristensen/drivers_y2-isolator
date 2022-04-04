@@ -494,7 +494,6 @@ def main(ctx_factory=cl.create_some_context,
         target_data = read_restart_data(actx, target_filename)
         target_order = int(target_data["order"])
         # will use this later
-        #restart_nspecies = int(restart_data["nspecies"])
 
         assert restart_data["num_parts"] == nparts
         assert restart_data["nspecies"] == nspecies
