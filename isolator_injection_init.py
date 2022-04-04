@@ -80,9 +80,7 @@ def get_mesh(dim, read_mesh=True):
     """Get the mesh."""
     from meshmode.mesh.io import read_gmsh
     mesh_filename = "data/isolator.msh"
-    #mesh = read_gmsh(mesh_filename, force_ambient_dim=dim)
     mesh = partial(read_gmsh, filename=mesh_filename, force_ambient_dim=dim)
-    #mesh = read_gmsh(mesh_filename)
 
     return mesh
 
@@ -597,11 +595,11 @@ class InitACTII:
         # back inside the injector
         #inj_fuel_x0 = 0.717
         # out in the cavity
-        inj_fuel_x0 = 0.7
-        inj_fuel_y0 = -0.0243245 - 3.e-3
-        inj_fuel_y1 = -0.0227345 + 3.e-3
-        inj_fuel_z0 = 0.035/2. - 3.e-3
-        inj_fuel_z1 = 0.035/2. + 3.e-3
+        inj_fuel_x0 = 0.712 - 0.002
+        #inj_fuel_y0 = -0.0243245 - 3.e-3
+        #inj_fuel_y1 = -0.0227345 + 3.e-3
+        #inj_fuel_z0 = 0.035/2. - 3.e-3
+        #inj_fuel_z1 = 0.035/2. + 3.e-3
         inj_sigma = 1500
         #gamma_guess_inj = gamma
 
@@ -612,31 +610,6 @@ class InitACTII:
         inj_weight = 0.5*(1.0 - actx.np.tanh(inj_tanh))
         for i in range(self._nspecies):
             inj_y[i] = y[i] + (inj_y[i] - y[i])*inj_weight
-
-        # bottom extent
-        inj_tanh = inj_sigma*(inj_fuel_y0 - ypos)
-        inj_weight = 0.5*(1.0 - actx.np.tanh(inj_tanh))
-        for i in range(self._nspecies):
-            inj_y[i] = y[i] + (inj_y[i] - y[i])*inj_weight
-
-        # top extent
-        inj_tanh = inj_sigma*(ypos - inj_fuel_y1)
-        inj_weight = 0.5*(1.0 - actx.np.tanh(inj_tanh))
-        for i in range(self._nspecies):
-            inj_y[i] = y[i] + (inj_y[i] - y[i])*inj_weight
-
-        if self._dim == 3:
-            # aft extent
-            inj_tanh = inj_sigma*(inj_fuel_z0 - zpos)
-            inj_weight = 0.5*(1.0 - actx.np.tanh(inj_tanh))
-            for i in range(self._nspecies):
-                inj_y[i] = y[i] + (inj_y[i] - y[i])*inj_weight
-
-            # fore extent
-            inj_tanh = inj_sigma*(zpos - inj_fuel_z1)
-            inj_weight = 0.5*(1.0 - actx.np.tanh(inj_tanh))
-            for i in range(self._nspecies):
-                inj_y[i] = y[i] + (inj_y[i] - y[i])*inj_weight
 
         # transition the mach number from 0 (cavitiy) to 1 (injection)
         inj_tanh = inj_sigma*(inj_x0 - xpos)
@@ -717,8 +690,7 @@ class InitACTII:
 
         # use the species field with fuel added everywhere
         for i in range(self._nspecies):
-            #y[i] = actx.np.where(inside_injector, inj_y[i], y[i])
-            y[i] = inj_y[i]
+            y[i] = actx.np.where(inside_injector, inj_y[i], y[i])
 
         # recompute the mass and energy (outside the injector) to account for
         # the change in mass fraction
