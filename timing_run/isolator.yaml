@@ -11,3 +11,4 @@ kappa_sc: 0.5
 integrator: rk4
 health_pres_min: 1700
 health_pres_max: 280000
+mesh_filename: data/isolator.msh
