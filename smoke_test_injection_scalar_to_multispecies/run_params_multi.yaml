@@ -1,0 +1,15 @@
+nviz: 10
+nrestart: 10
+nhealth: 1
+nstatus: 1
+current_dt: 1.0e-9
+t_final: 4.e-8
+order:  2
+dimen: 2
+mach_inj: 0.8
+nspecies: 7
+integrator: euler
+health_pres_min: 1
+health_pres_max: 500000
+#health_pres_min: 2.85013e3
+#health_pres_max: 2.84839e5
