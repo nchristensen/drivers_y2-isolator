@@ -1,1 +1,0 @@
-../../../isolator_injection_run.py

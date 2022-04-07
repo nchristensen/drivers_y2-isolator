@@ -349,11 +349,11 @@ def main(ctx_factory=cl.create_some_context,
 
     # initialize the ignition spark
     spark_center = np.zeros(shape=(dim,))
-    spark_center[0] = 0.685
-    spark_center[1] = -0.022
+    spark_center[0] = 0.682
+    spark_center[1] = -0.0226
     spark_diameter = 0.0025
 
-    spark_strength = 5000000./current_dt
+    spark_strength = 10000000./current_dt
     #spark_strength = 5e-3
 
     spark_init_time = 999999999.
