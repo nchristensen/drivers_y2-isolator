@@ -98,7 +98,89 @@ class MyRuntimeError(RuntimeError):
     pass
 
 
-def sponge(cv, cv_ref, sigma):
+from mirgecom.fluid import make_conserved
+
+
+class SparkSource:
+    r"""Energy deposition from a ignition source"
+
+    Internal energy is deposited as a gaussian  of the form:
+
+    .. math::
+
+        e &= e + e_{a}\exp^{(1-r^{2})}\\
+
+    .. automethod:: __init__
+    .. automethod:: __call__
+    """
+    def __init__(self, *, dim, center=None, width=1.0,
+                 amplitude=0., amplitude_func=None):
+        r"""Initialize the sponge parameters.
+
+        Parameters
+        ----------
+        center: numpy.ndarray
+            center of source
+        amplitude: float
+            source strength modifier
+        amplitude_fun: function
+            variation of amplitude with time
+        """
+
+        if center is None:
+            center = np.zeros(shape=(dim,))
+        self._center = center
+        self._dim = dim
+        self._amplitude = amplitude
+        self._width = width
+        self._amplitude_func = amplitude_func
+
+    def __call__(self, x_vec, cv, time, **kwargs):
+        """
+        Create the energy deposition at time *t* and location *x_vec*.
+
+        the source at time *t* is created by evaluting the gaussian
+        with time-dependent amplitude at *t*.
+
+        Parameters
+        ----------
+        cv: :class:`mirgecom.gas_model.FluidState`
+            Fluid state object with the conserved and thermal state.
+        time: float
+            Current time at which the solution is desired
+        x_vec: numpy.ndarray
+            Nodal coordinates
+        """
+
+        t = time
+        if self._amplitude_func is not None:
+            amplitude = self._amplitude*self._amplitude_func(t)
+        else:
+            amplitude = self._amplitude
+
+        #print(f"{time=} {amplitude=}")
+
+        loc = self._center
+
+        # coordinates relative to lump center
+        rel_center = make_obj_array(
+            [x_vec[i] - loc[i] for i in range(self._dim)]
+        )
+        actx = x_vec[0].array_context
+        r = actx.np.sqrt(np.dot(rel_center, rel_center))
+        expterm = amplitude * actx.np.exp(-(r**2)/(2*self._width*self._width))
+
+        mass = 0*cv.mass
+        momentum = 0*cv.momentum
+        species_mass = 0*cv.species_mass
+
+        energy = cv.energy + cv.mass*expterm
+
+        return make_conserved(dim=self._dim, mass=mass, energy=energy,
+                              momentum=momentum, species_mass=species_mass)
+
+
+def sponge_source(cv, cv_ref, sigma):
     return sigma*(cv_ref - cv)
 
 
@@ -265,6 +347,19 @@ def main(ctx_factory=cl.create_some_context,
     mu_override = False  # optionally read in from input
     nspecies = 0
 
+    # initialize the ignition spark
+    spark_center = np.zeros(shape=(dim,))
+    spark_center[0] = 0.685
+    spark_center[1] = -0.022
+    spark_diameter = 0.0025
+
+    spark_strength = 5000000./current_dt
+    #spark_strength = 5e-3
+
+    spark_init_time = 999999999.
+
+    spark_duration = 1.e-8
+
     if user_input_file:
         input_data = None
         if rank == 0:
@@ -356,6 +451,14 @@ def main(ctx_factory=cl.create_some_context,
             health_mass_frac_max = float(input_data["health_mass_frac_max"])
         except KeyError:
             pass
+        try:
+            ignition = bool(input_data["ignition"])
+        except KeyError:
+            pass
+        try:
+            spark_init_time = float(input_data["ignition_init_time"])
+        except KeyError:
+            pass
 
     # param sanity check
     allowed_integrators = ["rk4", "euler", "lsrk54", "lsrk144"]
@@ -380,6 +483,15 @@ def main(ctx_factory=cl.create_some_context,
         print(f"\tdimen = {dim}")
         print(f"\tTime integration {integrator}")
         print("#### Simluation control data: ####\n")
+
+    if rank == 0 and ignition:
+        print("\n#### Ignition control parameters ####")
+        print(f"spark center ({spark_center[0]},{spark_center[1]})")
+        print(f"spark FWHM {spark_diameter}")
+        print(f"spark strength {spark_strength}")
+        print(f"ignition time {spark_init_time}")
+        print(f"ignition duration {spark_duration}")
+        print("#### Ignition control parameters ####\n")
 
     timestepper = rk4_step
     if integrator == "euler":
@@ -611,6 +723,23 @@ def main(ctx_factory=cl.create_some_context,
     target_state = create_fluid_state(target_cv, temperature_seed)
     temperature_seed = current_state.temperature
 
+    # if you divide by 2.355, 50% of the spark is within this diameter
+    spark_diameter /= 2.355
+    # if you divide by 6, 99% of the energy is deposited in this time
+    spark_duration /= 6.0697
+
+    # gaussian application in time
+    def spark_time_func(t):
+        expterm = actx.np.exp((-(t - spark_init_time)**2) /
+                              (2*spark_duration*spark_duration))
+        return expterm
+
+    #spark_strength = 0.0
+    ignition_source = SparkSource(dim=dim, center=spark_center,
+                                  amplitude=spark_strength,
+                                  amplitude_func=spark_time_func,
+                                  width=spark_diameter)
+
     # initialize the sponge field
     sponge_thickness = 0.09
     sponge_amp = 1.0/current_dt/1000
@@ -618,7 +747,8 @@ def main(ctx_factory=cl.create_some_context,
 
     sponge_init = InitSponge(x0=sponge_x0, thickness=sponge_thickness,
                              amplitude=sponge_amp)
-    sponge_sigma = sponge_init(x_vec=thaw(discr.nodes(), actx))
+    x_vec = thaw(discr.nodes(), actx)
+    sponge_sigma = sponge_init(x_vec=x_vec)
 
     # set the boundary conditions
     def _ref_state_func(discr, btag, gas_model, ref_state, **kwargs):
@@ -934,7 +1064,8 @@ def main(ctx_factory=cl.create_some_context,
                                                      "gas_model": gas_model},
                                     alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
                                     quadrature_tag=quadrature_tag)
-            + sponge(cv=fluid_state.cv, cv_ref=target_cv, sigma=sponge_sigma)
+            + ignition_source(x_vec=x_vec, cv=cv, time=t)
+            + sponge_source(cv=fluid_state.cv, cv_ref=target_cv, sigma=sponge_sigma)
         )
         return make_obj_array([cv_rhs, 0*tseed])
 
@@ -954,7 +1085,8 @@ def main(ctx_factory=cl.create_some_context,
                                                      "gas_model": gas_model},
                                     alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
                                     quadrature_tag=quadrature_tag)
-            + sponge(cv=fluid_state.cv, cv_ref=restart_cv, sigma=sponge_sigma)
+            + ignition_source(x_vec=x_vec, cv=cv, time=t)
+            + sponge_source(cv=cv, cv_ref=restart_cv, sigma=sponge_sigma)
         )
         return make_obj_array([cv_rhs, 0*tseed])
 
