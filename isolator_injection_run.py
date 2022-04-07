@@ -770,6 +770,8 @@ def main(ctx_factory=cl.create_some_context,
         DTAG_BOUNDARY("injection"): ref_state,
         DTAG_BOUNDARY("wall"): wall
     }
+    from mirgecom.simutil import boundary_report
+    boundary_report(discr, boundaries, f"{casename}_boundaries_np{nparts}.yaml")
 
     visualizer = make_visualizer(discr)
 
