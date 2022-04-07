@@ -1064,7 +1064,6 @@ def main(ctx_factory=cl.create_some_context,
                                                      "gas_model": gas_model},
                                     alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
                                     quadrature_tag=quadrature_tag)
-            + ignition_source(x_vec=x_vec, cv=cv, time=t)
             + sponge_source(cv=fluid_state.cv, cv_ref=target_cv, sigma=sponge_sigma)
         )
         return make_obj_array([cv_rhs, 0*tseed])
