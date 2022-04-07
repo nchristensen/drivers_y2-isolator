@@ -74,10 +74,10 @@ from mirgecom.boundary import (
     PrescribedFluidBoundary,
     IsothermalWallBoundary,
 )
-import cantera
 from mirgecom.eos import IdealSingleGas, PyrometheusMixture
 from mirgecom.transport import SimpleTransport
 from mirgecom.gas_model import GasModel, make_fluid_state
+from mirgecom.fluid import make_conserved
 
 
 class SingleLevelFilter(logging.Filter):
@@ -98,7 +98,64 @@ class MyRuntimeError(RuntimeError):
     pass
 
 
-from mirgecom.fluid import make_conserved
+#from pyro_mechs.uiuc import Thermochemistry
+from uiuc import Thermochemistry
+
+
+class PyroWrapper(Thermochemistry):
+
+    # This bit disallows negative concentrations and instead
+    # pins them to 0. mass_fractions can sometimes be slightly
+    # negative and that's ok.
+    def get_concentrations(self, rho, mass_fractions):
+        concs = self.iwts * rho * mass_fractions
+        # ensure non-negative concentrations
+        zero = self._pyro_zeros_like(concs[0])
+        for i in range(self.num_species):
+            concs[i] = self.usr_np.where(self.usr_np.less(concs[i], 0),
+                                         zero, concs[i])
+        return concs
+
+    # This is the temperature update for *get_temperature*.  Having this
+    # separated out allows it to be used in the fluid drivers for evaluating
+    # convergence of the temperature calculation.
+    def get_temperature_update_energy(self, e_in, t_in, y):
+        pv_func = self.get_mixture_specific_heat_cv_mass
+        he_func = self.get_mixture_internal_energy_mass
+        return (e_in - he_func(t_in, y)) / pv_func(t_in, y)
+
+    # This hard-codes the number of Newton iterations because the convergence
+    # check is not compatible with lazy evaluation. Instead, we plan to check
+    # the temperature residual at simulation health checking time.
+    # FIXME: Occasional convergence check is other-than-ideal; revisit asap.
+    # - could adapt dt or num_iter on temperature convergence?
+    # - can pass-in num_iter?
+    def get_temperature(self, energy, temperature_guess, species_mass_fractions):
+        """Compute the temperature of the mixture from thermal energy.
+
+        Parameters
+        ----------
+        energy: :class:`~meshmode.dof_array.DOFArray`
+            The internal (thermal) energy of the mixture.
+        temperature_guess: :class:`~meshmode.dof_array.DOFArray`
+            An initial starting temperature for the Newton iterations.
+        species_mass_fractions: numpy.ndarray
+            An object array of :class:`~meshmode.dof_array.DOFArray` with the
+            mass fractions of the mixture species.
+
+        Returns
+        -------
+        :class:`~meshmode.dof_array.DOFArray`
+            The mixture temperature after a fixed number of Newton iterations.
+        """
+        temperature_niter = 5
+        num_iter = temperature_niter
+        t_i = temperature_guess
+        for _ in range(num_iter):
+            t_i = t_i + self.get_temperature_update_energy(
+                energy, t_i, species_mass_fractions
+            )
+        return t_i
 
 
 class SparkSource:
@@ -547,27 +604,14 @@ def main(ctx_factory=cl.create_some_context,
     transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa,
                                       species_diffusivity=spec_diffusivity)
 
-    # initialize eos and species mass fractions
-    if nspecies == 2:
-        species_names = ["air", "fuel"]
-    elif nspecies > 2:
-        from mirgecom.mechanisms import get_mechanism_cti
-        mech_cti = get_mechanism_cti("uiuc")
-
-        cantera_soln = cantera.Solution(phase_id="gas", source=mech_cti)
-        cantera_nspecies = cantera_soln.n_species
-        if nspecies != cantera_nspecies:
-            if rank == 0:
-                print(f"specified {nspecies=}, but cantera mechanism"
-                      f" needs nspecies={cantera_nspecies}")
-            raise RuntimeError()
-
     # make the eos
     if nspecies < 3:
         eos = IdealSingleGas(gamma=gamma, gas_const=r)
+        species_names = ["air", "fuel"]
     else:
-        from mirgecom.thermochemistry import make_pyrometheus_mechanism_class
-        pyro_mech = make_pyrometheus_mechanism_class(cantera_soln)(actx.np)
+        #from mirgecom.thermochemistry import make_pyrometheus_mechanism_class
+        #pyro_mech = make_pyrometheus_mechanism_class(cantera_soln)(actx.np)
+        pyro_mech = PyroWrapper(actx.np)
         eos = PyrometheusMixture(pyro_mech, temperature_guess=init_temperature)
         species_names = pyro_mech.species_names
 
