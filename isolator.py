@@ -730,14 +730,17 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         casename = "mirgecom"
 
     # logging and profiling
-    log_path = "log_data/"
+    #log_path = "log_data/"
+    log_path = ""
     logname = log_path + casename + ".sqlite"
 
+    """
     if rank == 0:
         import os
         log_dir = os.path.dirname(logname)
         if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir)
+    """
 
     logmgr = initialize_logmgr(use_logmgr,
         filename=logname, mode="wo", mpi_comm=comm)
@@ -750,7 +753,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     # main array context for the simulation
     if lazy:
-        actx = actx_class(comm, queue, mpi_base_tag=12000)
+        actx = actx_class(comm, queue,
+            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
+            mpi_base_tag=12000)
     else:
         actx = actx_class(comm, queue,
                 allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),

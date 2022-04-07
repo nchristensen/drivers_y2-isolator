@@ -72,7 +72,7 @@ from mirgecom.integrators import (rk4_step, lsrk54_step, lsrk144_step,
 from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
     PrescribedFluidBoundary,
-    IsothermalNoSlipBoundary,
+    IsothermalWallBoundary,
 )
 import cantera
 from mirgecom.eos import IdealSingleGas, PyrometheusMixture
@@ -159,7 +159,8 @@ class InitSponge:
 
 
 @mpi_entry_point
-def main(ctx_factory=cl.create_some_context, restart_filename=None,
+def main(ctx_factory=cl.create_some_context,
+         restart_filename=None, target_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
          use_overintegration=False, actx_class=False, casename=None,
          lazy=False):
@@ -220,7 +221,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     # main array context for the simulation
     if lazy:
-        actx = actx_class(comm, queue, mpi_base_tag=12000)
+        actx = actx_class(comm, queue,
+                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
+                mpi_base_tag=12000)
     else:
         actx = actx_class(comm, queue,
                 allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
@@ -484,6 +487,20 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         error_message = "Driver only supports restart. Start with -r <filename>"
         raise RuntimeError(error_message)
 
+    if target_filename:  # read the grid from restart data
+        target_filename = f"{target_filename}-{rank:04d}.pkl"
+
+        from mirgecom.restart import read_restart_data
+        target_data = read_restart_data(actx, target_filename)
+        target_order = int(target_data["order"])
+        # will use this later
+
+        assert restart_data["num_parts"] == nparts
+        assert restart_data["nspecies"] == nspecies
+        assert restart_data["global_nelements"] == target_data["global_nelements"]
+    else:
+        logger.warning("No target file specied, using restart as target")
+
     if rank == 0:
         logging.info("Making discretization")
 
@@ -567,7 +584,31 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         error_message = "Driver only supports restart. Start with -r <filename>"
         raise RuntimeError(error_message)
 
+    if target_filename:
+        if rank == 0:
+            logging.info("Reading target soln.")
+        target_cv = target_data["cv"]
+        if target_order != order:
+            target_discr = EagerDGDiscretization(
+                actx,
+                local_mesh,
+                order=target_order,
+                mpi_communicator=comm)
+            from meshmode.discretization.connection import make_same_mesh_connection
+            connection = make_same_mesh_connection(
+                actx,
+                discr.discr_from_dd("vol"),
+                target_discr.discr_from_dd("vol")
+            )
+            target_cv = connection(target_data["cv"])
+
+        if logmgr:
+            logmgr_set_time(logmgr, current_step, current_t)
+    else:
+        target_cv = restart_cv
+
     current_state = create_fluid_state(restart_cv, temperature_seed)
+    target_state = create_fluid_state(target_cv, temperature_seed)
     temperature_seed = current_state.temperature
 
     # initialize the sponge field
@@ -588,10 +629,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                    as_dofdesc(btag).with_discr_tag(quadrature_tag),
                                    ref_state, gas_model)
 
-    _ref_boundary_state_func = partial(_ref_state_func, ref_state=current_state)
+    _ref_boundary_state_func = partial(_ref_state_func, ref_state=target_state)
 
     ref_state = PrescribedFluidBoundary(boundary_state_func=_ref_boundary_state_func)
-    wall = IsothermalNoSlipBoundary()
+    wall = IsothermalWallBoundary()
 
     boundaries = {
         DTAG_BOUNDARY("inflow"): ref_state,
@@ -599,6 +640,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         DTAG_BOUNDARY("injection"): ref_state,
         DTAG_BOUNDARY("wall"): wall
     }
+    from mirgecom.simutil import boundary_report
+    boundary_report(discr, boundaries, f"{casename}_boundaries_np{nparts}.yaml")
 
     visualizer = make_visualizer(discr)
 
@@ -893,7 +936,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                                                      "gas_model": gas_model},
                                     alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
                                     quadrature_tag=quadrature_tag)
-            + sponge(cv=fluid_state.cv, cv_ref=restart_cv, sigma=sponge_sigma)
+            + sponge(cv=fluid_state.cv, cv_ref=target_cv, sigma=sponge_sigma)
         )
         return make_obj_array([cv_rhs, 0*tseed])
 
@@ -968,6 +1011,8 @@ if __name__ == "__main__":
         description="MIRGE-Com Isentropic Nozzle Driver")
     parser.add_argument("-r", "--restart_file", type=ascii, dest="restart_file",
                         nargs="?", action="store", help="simulation restart file")
+    parser.add_argument("-t", "--target_file", type=ascii, dest="target_file",
+                        nargs="?", action="store", help="simulation target file")
     parser.add_argument("-i", "--input_file", type=ascii, dest="input_file",
                         nargs="?", action="store", help="simulation config file")
     parser.add_argument("-c", "--casename", type=ascii, dest="casename", nargs="?",
@@ -1004,6 +1049,11 @@ if __name__ == "__main__":
         restart_filename = (args.restart_file).replace("'", "")
         print(f"Restarting from file: {restart_filename}")
 
+    target_filename = None
+    if args.target_file:
+        target_filename = (args.target_file).replace("'", "")
+        print(f"Target file specified: {target_filename}")
+
     input_file = None
     if args.input_file:
         input_file = args.input_file.replace("'", "")
@@ -1012,7 +1062,8 @@ if __name__ == "__main__":
         print("No user input file, using default values")
 
     print(f"Running {sys.argv[0]}\n")
-    main(restart_filename=restart_filename, user_input_file=input_file,
+    main(restart_filename=restart_filename, target_filename=target_filename,
+         user_input_file=input_file,
          use_profiling=args.profile, use_logmgr=args.log,
          use_overintegration=args.overintegration, lazy=lazy,
          actx_class=actx_class, casename=casename)
