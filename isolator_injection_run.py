@@ -387,7 +387,7 @@ def main(ctx_factory=cl.create_some_context,
     health_pres_min = 1.0e-1
     health_pres_max = 2.0e6
     health_temp_min = 1.0
-    health_temp_max = 4000
+    health_temp_max = 5000
     health_mass_frac_min = -10
     health_mass_frac_max = 10
 
@@ -409,9 +409,11 @@ def main(ctx_factory=cl.create_some_context,
     spark_center = np.zeros(shape=(dim,))
     spark_center[0] = 0.677
     spark_center[1] = -0.021
+    if dim == 3:
+        spark_center[2] = 0.035/2.
     spark_diameter = 0.0025
 
-    spark_strength = 50000000./current_dt
+    spark_strength = 40000000./current_dt
     #spark_strength = 5e-3
 
     spark_init_time = 999999999.
