@@ -1133,6 +1133,26 @@ def main(ctx_factory=cl.create_some_context,
                                                      "gas_model": gas_model},
                                     alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
                                     quadrature_tag=quadrature_tag)
+            + sponge_source(cv=cv, cv_ref=restart_cv, sigma=sponge_sigma)
+        )
+        return make_obj_array([cv_rhs, 0*tseed])
+
+    def my_rhs_with_ignition(t, state):
+        cv, tseed = state
+        fluid_state = make_fluid_state(cv=cv, gas_model=gas_model,
+                                       temperature_seed=tseed)
+        alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
+        cv_rhs = (
+            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
+                        gas_model=gas_model, quadrature_tag=quadrature_tag)
+            + eos.get_species_source_terms(cv,
+                                           temperature=fluid_state.temperature)
+            + av_laplacian_operator(discr, fluid_state=fluid_state,
+                                    boundaries=boundaries,
+                                    boundary_kwargs={"time": t,
+                                                     "gas_model": gas_model},
+                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
+                                    quadrature_tag=quadrature_tag)
             + ignition_source(x_vec=x_vec, cv=cv, time=t)
             + sponge_source(cv=cv, cv_ref=restart_cv, sigma=sponge_sigma)
         )
@@ -1143,7 +1163,10 @@ def main(ctx_factory=cl.create_some_context,
 
     my_rhs = my_rhs_without_combustion
     if nspecies > 2:
-        my_rhs = my_rhs_with_combustion
+        if ignition:
+            my_rhs = my_rhs_with_ignition
+        else:
+            my_rhs = my_rhs_with_combustion
 
     current_step, current_t, stepper_state = \
         advance_state(rhs=my_rhs, timestepper=timestepper,
