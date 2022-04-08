@@ -102,3 +102,15 @@ run_init.sh
 ```
 run.sh
 ```
+
+For production scale testing see the test_mesh_injection directory. 
+
+```test_mesh_injection/template```
+
+There are 4 run sizes here, each with their own meshing. These meshes can be gererated similar to above. On Lassen the user can find pre-generated meshes in 
+
+```/usr/WS1/xpacc/CEESD/Y2_test_meshes```
+
+The meshes range in size from 1 million elements (eigthX) to 180 millions elements (oneX). All runs are set to use multi-species with chemistry (nspecies=7).
+
+A sample Lassen submission script is co-located with the runs, combinedLassenBatch.sh.
