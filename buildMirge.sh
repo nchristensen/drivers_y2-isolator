@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # default branch for building mirgecom for this driver
-mirge_branch="production"
-mirge_fork="illinois-ceesd"
+mirge_fork="majosm"
+mirge_branch="shortcut-multiphysics-production"
 # conda environment name
 conda_env="emirge-isolator-wall"
 
