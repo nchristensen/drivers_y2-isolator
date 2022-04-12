@@ -41,9 +41,11 @@ from functools import partial
 
 from arraycontext import thaw, freeze
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
+from meshmode.dof_array import DOFArray
 from grudge.eager import EagerDGDiscretization
+from grudge.discretization import make_discretization_collection
 from grudge.shortcuts import make_visualizer
-from grudge.dof_desc import DTAG_BOUNDARY
+from grudge.dof_desc import VolumeDomainTag, DOFDesc
 from grudge.op import nodal_max, nodal_min
 from logpyle import IntervalTimer, set_dt
 from mirgecom.logging_quantities import (
@@ -53,12 +55,10 @@ from mirgecom.logging_quantities import (
     set_sim_state, logmgr_add_device_memory_usage
 )
 
-from mirgecom.navierstokes import ns_operator
-from mirgecom.artificial_viscosity import \
-    av_laplacian_operator, smoothness_indicator
+from mirgecom.artificial_viscosity import smoothness_indicator
 from mirgecom.simutil import (
     check_step,
-    generate_and_distribute_mesh,
+    distribute_mesh,
     write_visfile,
     check_naninf_local,
     check_range_local,
@@ -77,10 +77,16 @@ from mirgecom.boundary import (
     PrescribedFluidBoundary,
     IsothermalNoSlipBoundary,
 )
+from mirgecom.diffusion import DirichletDiffusionBoundary
 #from mirgecom.initializers import (Uniform, PlanarDiscontinuity)
 from mirgecom.eos import IdealSingleGas
 from mirgecom.transport import SimpleTransport
 from mirgecom.gas_model import GasModel, make_fluid_state
+from mirgecom.wall_model import WallModel
+from mirgecom.multiphysics.thermally_coupled_fluid_wall import (
+    coupled_grad_t_operator,
+    coupled_ns_heat_operator
+)
 
 
 class SingleLevelFilter(logging.Filter):
@@ -122,14 +128,6 @@ class MyRuntimeError(RuntimeError):
     """Simple exception to kill the simulation."""
 
     pass
-
-
-def get_mesh(dim, mesh_filename, read_mesh=True):
-    """Get the mesh."""
-    from meshmode.mesh.io import read_gmsh
-    mesh = partial(read_gmsh, filename=mesh_filename, force_ambient_dim=dim)
-
-    return mesh
 
 
 def sponge(cv, cv_ref, sigma):
@@ -687,6 +685,25 @@ class UniformModified:
                               momentum=mom, species_mass=specmass)
 
 
+def mask_from_elements(vol_discr, actx, elements):
+    mesh = vol_discr.mesh
+    zeros = vol_discr.zeros(actx)
+
+    group_arrays = []
+
+    for igrp in range(len(mesh.groups)):
+        start_elem_nr = mesh.base_element_nrs[igrp]
+        end_elem_nr = start_elem_nr + mesh.groups[igrp].nelements
+        grp_elems = elements[
+            (elements >= start_elem_nr)
+            & (elements < end_elem_nr)] - start_elem_nr
+        grp_ary_np = actx.to_numpy(zeros[igrp])
+        grp_ary_np[grp_elems] = 1
+        group_arrays.append(actx.from_numpy(grp_ary_np))
+
+    return DOFArray(actx, tuple(group_arrays))
+
+
 @mpi_entry_point
 def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
@@ -786,11 +803,14 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     s0_sc = -5.0
     kappa_sc = 0.5
     dim = 2
-    mesh_filename = "data/isolator.msh"
+    mesh_filename = "data/isolator_wall.msh"
 
     # material properties
     mu = 1.0e-5
     mu_override = False  # optionally read in from input
+
+    # wall stuff
+    wall_penalty_amount = 25
 
     if user_input_file:
         input_data = None
@@ -863,6 +883,10 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             mesh_filename = input_data["mesh_filename"]
         except KeyError:
             pass
+        try:
+            wall_penalty_amount = input_data["wall_penalty_amount"]
+        except KeyError:
+            pass
 
     # param sanity check
     allowed_integrators = ["rk4", "euler", "lsrk54", "lsrk144"]
@@ -920,7 +944,23 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     else:
         mu = mu_mix
 
+    # Trouble getting AV working with lazy+wall, so crank up viscosity
+    # instead for now
+    mu *= 100
+
     kappa = cp*mu/Pr
+
+    # Averaging from https://www.azom.com/article.aspx?ArticleID=1630
+    wall_insert_rho = 1625
+    wall_insert_cp = 770
+    wall_insert_kappa = 247.5
+
+    # Averaging from http://www.matweb.com/search/datasheet.aspx?bassnum=MS0001
+    wall_surround_rho = 7.9e3
+    wall_surround_cp = 470
+    wall_surround_kappa = 48
+
+    wall_time_scale = 250
 
     if rank == 0:
         print("\n#### Simluation material properties: ####")
@@ -1039,31 +1079,25 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         ymax=0.011675488
     )
 
-    def _boundary_state_func(discr, btag, gas_model, actx, init_func, **kwargs):
-        bnd_discr = discr.discr_from_dd(btag)
-        nodes = thaw(bnd_discr.nodes(), actx)
+    def _boundary_state_func(discr, dd_bdry, gas_model, actx, init_func, **kwargs):
+        nodes = thaw(discr.nodes(dd_bdry), actx)
         return make_fluid_state(init_func(x_vec=nodes, eos=gas_model.eos,
                                           **kwargs), gas_model)
 
-    def _inflow_state_func(discr, btag, gas_model, state_minus, **kwargs):
-        return _boundary_state_func(discr, btag, gas_model,
+    def _inflow_state_func(discr, dd_bdry, gas_model, state_minus, **kwargs):
+        return _boundary_state_func(discr, dd_bdry, gas_model,
                                     state_minus.array_context,
                                     _inflow_init, **kwargs)
 
-    def _outflow_state_func(discr, btag, gas_model, state_minus, **kwargs):
-        return _boundary_state_func(discr, btag, gas_model,
+    def _outflow_state_func(discr, dd_bdry, gas_model, state_minus, **kwargs):
+        return _boundary_state_func(discr, dd_bdry, gas_model,
                                     state_minus.array_context,
                                     _outflow_init, **kwargs)
 
     inflow = PrescribedFluidBoundary(boundary_state_func=_inflow_state_func)
     outflow = PrescribedFluidBoundary(boundary_state_func=_outflow_state_func)
-    wall = IsothermalNoSlipBoundary()
-
-    boundaries = {
-        DTAG_BOUNDARY("inflow"): inflow,
-        DTAG_BOUNDARY("outflow"): outflow,
-        DTAG_BOUNDARY("wall"): wall,
-    }
+    isothermal = IsothermalNoSlipBoundary(temp_wall)
+    wall_farfield = DirichletDiffusionBoundary(temp_wall)
 
     viz_path = "viz_data/"
     vizname = viz_path + casename
@@ -1078,8 +1112,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         restart_data = read_restart_data(actx, restart_filename)
         current_step = restart_data["step"]
         current_t = restart_data["t"]
-        local_mesh = restart_data["local_mesh"]
-        local_nelements = local_mesh.nelements
+        volume_to_local_mesh_data = restart_data["volume_to_local_mesh_data"]
         global_nelements = restart_data["global_nelements"]
         restart_order = int(restart_data["order"])
 
@@ -1087,9 +1120,23 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     else:  # generate the grid from scratch
         if rank == 0:
             print(f"Reading mesh from {mesh_filename}")
-        local_mesh, global_nelements = generate_and_distribute_mesh(
-            comm, get_mesh(dim=dim, mesh_filename=mesh_filename))
-        local_nelements = local_mesh.nelements
+
+        def get_mesh_data():
+            from meshmode.mesh.io import read_gmsh
+            mesh, tag_to_elements = read_gmsh(
+                mesh_filename, force_ambient_dim=dim,
+                return_tag_to_elements_map=True)
+            volume_to_tags = {
+                "fluid": ["fluid"],
+                "wall": ["wall insert", "wall surround"]}
+            return mesh, tag_to_elements, volume_to_tags
+
+        volume_to_local_mesh_data, global_nelements = distribute_mesh(
+            comm, get_mesh_data)
+
+    local_nelements = (
+        volume_to_local_mesh_data["fluid"][0].nelements
+        + volume_to_local_mesh_data["wall"][0].nelements)
 
     if rank == 0:
         logger.info("Making discretization")
@@ -1098,23 +1145,38 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     from meshmode.discretization.poly_element import \
           default_simplex_group_factory, QuadratureSimplexGroupFactory
 
-    discr = EagerDGDiscretization(
-        actx, local_mesh,
+    discr = make_discretization_collection(
+        actx,
+        volumes={
+            vol: mesh
+            for vol, (mesh, _) in volume_to_local_mesh_data.items()},
         discr_tag_to_group_factory={
             DISCR_TAG_BASE: default_simplex_group_factory(
-                base_dim=local_mesh.dim, order=order),
+                base_dim=dim, order=order),
             DISCR_TAG_QUAD: QuadratureSimplexGroupFactory(2*order + 1)
         },
-        mpi_communicator=comm
-    )
+        _result_type=EagerDGDiscretization)
 
     if use_overintegration:
         quadrature_tag = DISCR_TAG_QUAD
     else:
-        quadrature_tag = None
+        quadrature_tag = DISCR_TAG_BASE
 
     if rank == 0:
         logger.info("Done making discretization")
+
+    dd_vol_fluid = DOFDesc(VolumeDomainTag("fluid"), DISCR_TAG_BASE)
+    dd_vol_wall = DOFDesc(VolumeDomainTag("wall"), DISCR_TAG_BASE)
+
+    fluid_boundaries = {
+        dd_vol_fluid.trace("inflow").domain_tag: inflow,
+        dd_vol_fluid.trace("outflow").domain_tag: outflow,
+        dd_vol_fluid.trace("isothermal").domain_tag: isothermal,
+    }
+
+    wall_boundaries = {
+        dd_vol_wall.trace("wall far-field").domain_tag: wall_farfield
+    }
 
     # initialize the sponge field
     sponge_thickness = 0.09
@@ -1123,9 +1185,27 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     sponge_init = InitSponge(x0=sponge_x0, thickness=sponge_thickness,
                              amplitude=sponge_amp)
-    sponge_sigma = sponge_init(x_vec=thaw(discr.nodes(), actx))
-    ref_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), actx),
+    sponge_sigma = sponge_init(x_vec=thaw(discr.nodes(dd_vol_fluid), actx))
+    ref_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(dd_vol_fluid), actx),
                        eos=eos, time=0)
+
+    wall_vol_discr = discr.discr_from_dd(dd_vol_wall)
+    wall_tag_to_elements = volume_to_local_mesh_data["wall"][1]
+    wall_insert_mask = mask_from_elements(
+        wall_vol_discr, actx, wall_tag_to_elements["wall insert"])
+    wall_surround_mask = mask_from_elements(
+        wall_vol_discr, actx, wall_tag_to_elements["wall surround"])
+
+    wall_model = WallModel(
+        density=(
+            wall_insert_rho * wall_insert_mask
+            + wall_surround_rho * wall_surround_mask),
+        heat_capacity=(
+            wall_insert_cp * wall_insert_mask
+            + wall_surround_cp * wall_surround_mask),
+        thermal_conductivity=(
+            wall_insert_kappa * wall_insert_mask
+            + wall_surround_kappa * wall_surround_mask))
 
     vis_timer = None
 
@@ -1157,32 +1237,47 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     if restart_filename:
         if rank == 0:
             logger.info("Restarting soln.")
-        current_cv = restart_data["cv"]
         if restart_order != order:
-            restart_discr = EagerDGDiscretization(
+            restart_discr = make_discretization_collection(
                 actx,
-                local_mesh,
+                volumes={
+                    vol: mesh
+                    for vol, (mesh, _) in volume_to_local_mesh_data.items()},
                 order=restart_order,
-                mpi_communicator=comm)
+                _result_type=EagerDGDiscretization)
             from meshmode.discretization.connection import make_same_mesh_connection
-            connection = make_same_mesh_connection(
+            fluid_connection = make_same_mesh_connection(
                 actx,
-                discr.discr_from_dd("vol"),
-                restart_discr.discr_from_dd("vol")
+                discr.discr_from_dd(dd_vol_fluid),
+                restart_discr.discr_from_dd(dd_vol_fluid)
             )
-            current_cv = connection(restart_data["cv"])
+            wall_connection = make_same_mesh_connection(
+                actx,
+                discr.discr_from_dd(dd_vol_wall),
+                restart_discr.discr_from_dd(dd_vol_wall)
+            )
+            current_cv = fluid_connection(restart_data["cv"])
+            current_wall_temperature = wall_connection(
+                restart_data["wall_temperature"])
+        else:
+            current_cv = restart_data["cv"]
+            current_wall_temperature = restart_data["wall_temperature"]
         if logmgr:
             logmgr_set_time(logmgr, current_step, current_t)
     else:
         # Set the current state from time 0
         if rank == 0:
             logger.info("Initializing soln.")
-        current_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), actx),
-                                  eos=eos, time=0)
+        current_cv = bulk_init(
+            discr=discr, x_vec=thaw(discr.nodes(dd_vol_fluid), actx), eos=eos,
+            time=0)
+        current_wall_temperature = temp_wall * (0*wall_insert_mask + 1)
 
-    current_state = make_fluid_state(current_cv, gas_model)
+    current_fluid_state = make_fluid_state(current_cv, gas_model)
+    current_state = make_obj_array([current_cv, current_wall_temperature])
 
-    visualizer = make_visualizer(discr)
+    fluid_visualizer = make_visualizer(discr, volume_dd=dd_vol_fluid)
+    wall_visualizer = make_visualizer(discr, volume_dd=dd_vol_wall)
 
     #    initname = initializer.__class__.__name__
     eosname = eos.__class__.__name__
@@ -1196,6 +1291,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         logger.info(init_message)
 
     def my_write_status(dt, cfl, dv):
+        # FIXME: Add status for wall CFL + wall temperature?
         status_msg = f"-------- dt = {dt:1.3e}, cfl = {cfl:1.4f}"
         temp = dv.temperature
         pres = dv.pressure
@@ -1204,15 +1300,15 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         pres = thaw(freeze(pres, actx), actx)
         from grudge.op import nodal_min_loc, nodal_max_loc
         pmin = global_reduce(
-            actx.to_numpy(nodal_min_loc(discr, "vol", pres)), op="min")
+            actx.to_numpy(nodal_min_loc(discr, dd_vol_fluid, pres)), op="min")
         pmax = global_reduce(
-            actx.to_numpy(nodal_max_loc(discr, "vol", pres)), op="max")
+            actx.to_numpy(nodal_max_loc(discr, dd_vol_fluid, pres)), op="max")
         dv_status_msg = (
             f"\n-------- P (min, max) (Pa) = ({pmin:1.9e}, {pmax:1.9e})")
         tmin = global_reduce(
-            actx.to_numpy(nodal_min_loc(discr, "vol", temp)), op="min")
+            actx.to_numpy(nodal_min_loc(discr, dd_vol_fluid, temp)), op="min")
         tmax = global_reduce(
-            actx.to_numpy(nodal_max_loc(discr, "vol", temp)), op="max")
+            actx.to_numpy(nodal_max_loc(discr, dd_vol_fluid, temp)), op="max")
         dv_status_msg += (
             f"\n-------- T (min, max) (K)  = ({tmin:7g}, {tmax:7g})")
         status_msg += dv_status_msg
@@ -1221,29 +1317,59 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         if rank == 0:
             logger.info(status_msg)
 
-    def my_write_viz(step, t, cv, dv, ts_field, alpha_field):
-        tagged_cells = smoothness_indicator(discr, cv.mass, s0=s0_sc,
-                                            kappa=kappa_sc)
+    def _grad_t_operator(t, fluid_state, wall_temperature):
+        fluid_grad_t, wall_grad_t = coupled_grad_t_operator(
+            discr,
+            gas_model, wall_model,
+            dd_vol_fluid, dd_vol_wall,
+            fluid_boundaries, wall_boundaries,
+            fluid_state, wall_temperature,
+            time=t,
+            quadrature_tag=quadrature_tag)
+        return make_obj_array([fluid_grad_t, wall_grad_t])
+
+    grad_t_operator = actx.compile(_grad_t_operator)
+
+    def my_write_viz(step, t, fluid_state, wall_temperature, ts_field, alpha_field):
+        cv = fluid_state.cv
+        dv = fluid_state.dv
+        tagged_cells = smoothness_indicator(
+            discr, cv.mass, s0=s0_sc, kappa=kappa_sc, volume_dd=dd_vol_fluid)
+
+        grad_temperature = grad_t_operator(t, fluid_state, wall_temperature)
+        fluid_grad_temperature = grad_temperature[0]
+        wall_grad_temperature = grad_temperature[1]
 
         mach = (actx.np.sqrt(np.dot(cv.velocity, cv.velocity)) /
                             dv.speed_of_sound)
-        viz_fields = [("cv", cv),
-                      ("dv", dv),
-                      ("mach", mach),
-                      ("velocity", cv.velocity),
-                      ("sponge_sigma", sponge_sigma),
-                      ("alpha", alpha_field),
-                      ("tagged_cells", tagged_cells),
-                      ("dt" if constant_cfl else "cfl", ts_field)]
-        write_visfile(discr, viz_fields, visualizer, vizname=vizname,
-                      step=step, t=t, overwrite=True)
+        fluid_viz_fields = [
+            ("cv", cv),
+            ("dv", dv),
+            ("mach", mach),
+            ("velocity", cv.velocity),
+            ("grad_temperature", fluid_grad_temperature),
+            ("sponge_sigma", sponge_sigma),
+            ("alpha", alpha_field),
+            ("tagged_cells", tagged_cells),
+            ("dt" if constant_cfl else "cfl", ts_field)]
+        wall_viz_fields = [
+            ("temperature", wall_temperature),
+            ("grad_temperature", wall_grad_temperature),
+            ("kappa", wall_model.thermal_conductivity)]
+        write_visfile(
+            discr, fluid_viz_fields, fluid_visualizer,
+            vizname=vizname+"-fluid", step=step, t=t, overwrite=True)
+        write_visfile(
+            discr, wall_viz_fields, wall_visualizer,
+            vizname=vizname+"-wall", step=step, t=t, overwrite=True)
 
-    def my_write_restart(step, t, cv):
+    def my_write_restart(step, t, state):
         restart_fname = restart_pattern.format(cname=casename, step=step, rank=rank)
         if restart_fname != restart_filename:
             restart_data = {
-                "local_mesh": local_mesh,
-                "cv": cv,
+                "volume_to_local_mesh_data": volume_to_local_mesh_data,
+                "cv": state[0],
+                "wall_temperature": state[1],
                 "t": t,
                 "step": step,
                 "order": order,
@@ -1253,31 +1379,32 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             write_restart_file(actx, restart_data, restart_fname, comm)
 
     def my_health_check(dv):
+        # FIXME: Add health check for wall temperature?
         health_error = False
-        if check_naninf_local(discr, "vol", dv.pressure):
+        if check_naninf_local(discr, dd_vol_fluid, dv.pressure):
             health_error = True
             logger.info(f"{rank=}: NANs/Infs in pressure data.")
 
-        if global_reduce(check_range_local(discr, "vol", dv.pressure,
+        if global_reduce(check_range_local(discr, dd_vol_fluid, dv.pressure,
                                      health_pres_min, health_pres_max),
                                      op="lor"):
             health_error = True
-            p_min = actx.to_numpy(nodal_min(discr, "vol", dv.pressure))
-            p_max = actx.to_numpy(nodal_max(discr, "vol", dv.pressure))
+            p_min = actx.to_numpy(nodal_min(discr, dd_vol_fluid, dv.pressure))
+            p_max = actx.to_numpy(nodal_max(discr, dd_vol_fluid, dv.pressure))
             logger.info(f"Pressure range violation ({p_min=}, {p_max=})")
 
         return health_error
 
-    def my_get_viscous_timestep(discr, state, alpha):
+    def my_get_viscous_timestep(discr, fluid_state, alpha):
         """Routine returns the the node-local maximum stable viscous timestep.
 
         Parameters
         ----------
         discr: grudge.eager.EagerDGDiscretization
             the discretization to use
-        state: :class:`~mirgecom.gas_model.FluidState`
+        fluid_state: :class:`~mirgecom.gas_model.FluidState`
             Full fluid state including conserved and thermal state
-        alpha: :class:`~meshmode.DOFArray`
+        alpha: :class:`~meshmode.dof_array.DOFArray`
             Arfifical viscosity
 
         Returns
@@ -1287,26 +1414,27 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         """
         from grudge.dt_utils import characteristic_lengthscales
 
-        length_scales = characteristic_lengthscales(state.array_context, discr)
+        length_scales = characteristic_lengthscales(
+            fluid_state.array_context, discr, dd=dd_vol_fluid)
 
         nu = 0
         d_alpha_max = 0
 
-        if state.is_viscous:
+        if fluid_state.is_viscous:
             from mirgecom.viscous import get_local_max_species_diffusivity
-            nu = state.viscosity/state.mass_density
+            nu = fluid_state.viscosity/fluid_state.mass_density
             d_alpha_max = \
                 get_local_max_species_diffusivity(
-                    state.array_context,
-                    state.species_diffusivity
+                    fluid_state.array_context,
+                    fluid_state.species_diffusivity
                 )
 
         return(
-            length_scales / (state.wavespeed
+            length_scales / (fluid_state.wavespeed
             + ((nu + d_alpha_max + alpha) / length_scales))
         )
 
-    def my_get_viscous_cfl(discr, dt, state, alpha):
+    def my_get_viscous_cfl(discr, dt, fluid_state, alpha):
         """Calculate and return node-local CFL based on current state and timestep.
 
         Parameters
@@ -1315,9 +1443,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             the discretization to use
         dt: float or :class:`~meshmode.dof_array.DOFArray`
             A constant scalar dt or node-local dt
-        state: :class:`~mirgecom.gas_model.FluidState`
+        fluid_state: :class:`~mirgecom.gas_model.FluidState`
             Full fluid state including conserved and thermal state
-        alpha: :class:`~meshmode.DOFArray`
+        alpha: :class:`~meshmode.dof_array.DOFArray`
             Arfifical viscosity
 
         Returns
@@ -1325,33 +1453,38 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         :class:`~meshmode.dof_array.DOFArray`
             The CFL at each node.
         """
-        return dt / my_get_viscous_timestep(discr, state=state, alpha=alpha)
+        return dt / my_get_viscous_timestep(
+            discr, fluid_state=fluid_state, alpha=alpha)
 
-    def my_get_timestep(t, dt, state, alpha):
+    def my_get_timestep(t, dt, fluid_state, alpha):
+        # FIXME: Take into account wall timestep restriction
         t_remaining = max(0, t_final - t)
         if constant_cfl:
-            ts_field = current_cfl * my_get_viscous_timestep(discr, state=state,
-                                                             alpha=alpha)
+            ts_field = current_cfl * my_get_viscous_timestep(
+                discr, fluid_state=fluid_state, alpha=alpha)
             from grudge.op import nodal_min
-            dt = actx.to_numpy(nodal_min(discr, "vol", ts_field))
+            dt = actx.to_numpy(nodal_min(discr, dd_vol_fluid, ts_field))
             cfl = current_cfl
         else:
-            ts_field = my_get_viscous_cfl(discr, dt=dt, state=state, alpha=alpha)
+            ts_field = my_get_viscous_cfl(
+                discr, dt=dt, fluid_state=fluid_state, alpha=alpha)
             from grudge.op import nodal_max
-            cfl = actx.to_numpy(nodal_max(discr, "vol", ts_field))
+            cfl = actx.to_numpy(nodal_max(discr, dd_vol_fluid, ts_field))
 
         return ts_field, cfl, min(t_remaining, dt)
 
-    def my_get_alpha(discr, state, alpha):
+    def my_get_alpha(discr, fluid_state, alpha):
         """ Scale alpha by the element characteristic length """
         from grudge.dt_utils import characteristic_lengthscales
-        array_context = state.array_context
-        length_scales = characteristic_lengthscales(array_context, discr)
+        array_context = fluid_state.array_context
+        length_scales = characteristic_lengthscales(
+            array_context, discr, dd=dd_vol_fluid)
 
         #from mirgecom.fluid import compute_wavespeed
-        #wavespeed = compute_wavespeed(eos, state)
+        #wavespeed = compute_wavespeed(eos, fluid_state)
 
-        vmag = array_context.np.sqrt(np.dot(state.velocity, state.velocity))
+        vmag = array_context.np.sqrt(
+            np.dot(fluid_state.velocity, fluid_state.velocity))
         #alpha_field = alpha*wavespeed*length_scales
         alpha_field = alpha*vmag*length_scales
         #alpha_field = wavespeed*0 + alpha*current_step
@@ -1360,8 +1493,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         return alpha_field
 
     def my_pre_step(step, t, dt, state):
-        fluid_state = make_fluid_state(cv=state, gas_model=gas_model)
-        cv = fluid_state.cv
+        fluid_state = make_fluid_state(cv=state[0], gas_model=gas_model)
+        wall_temperature = state[1]
         dv = fluid_state.dv
 
         try:
@@ -1388,22 +1521,27 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                 my_write_status(dt=dt, cfl=cfl, dv=dv)
 
             if do_restart:
-                my_write_restart(step=step, t=t, cv=cv)
+                my_write_restart(step=step, t=t, state=state)
 
             if do_viz:
-                my_write_viz(step=step, t=t, cv=cv, dv=dv,
-                             ts_field=ts_field, alpha_field=alpha_field)
+                my_write_viz(
+                    step=step, t=t, fluid_state=fluid_state,
+                    wall_temperature=wall_temperature, ts_field=ts_field,
+                    alpha_field=alpha_field)
 
         except MyRuntimeError:
             if rank == 0:
                 logger.error("Errors detected; attempting graceful exit.")
-            my_write_viz(step=step, t=t, cv=cv, dv=dv, ts_field=ts_field,
-                         alpha_field=alpha_field)
-            my_write_restart(step=step, t=t, cv=cv)
+            my_write_viz(
+                step=step, t=t, fluid_state=fluid_state,
+                wall_temperature=wall_temperature, ts_field=ts_field,
+                alpha_field=alpha_field)
+            my_write_restart(step=step, t=t, state=state)
             raise
 
-        dt = get_sim_timestep(discr, fluid_state, t, dt, current_cfl, t_final,
-                              constant_cfl)
+        dt = get_sim_timestep(
+            discr, fluid_state, t, dt, current_cfl, t_final, constant_cfl,
+            fluid_volume_dd=dd_vol_fluid)
 
         return state, dt
 
@@ -1412,49 +1550,63 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
         # imo this is a design/scope flaw
         if logmgr:
             set_dt(logmgr, dt)
-            set_sim_state(logmgr, dim, state, eos)
+            set_sim_state(logmgr, dim, state[0], eos)
             logmgr.tick_after()
         return state, dt
 
     def my_rhs(t, state):
-        fluid_state = make_fluid_state(cv=state, gas_model=gas_model)
+        fluid_state = make_fluid_state(cv=state[0], gas_model=gas_model)
+        wall_temperature = state[1]
         alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-        return (
-            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + av_laplacian_operator(discr, fluid_state=fluid_state,
-                                    boundaries=boundaries,
-                                    boundary_kwargs={"time": t,
-                                                     "gas_model": gas_model},
-                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
-                                    quadrature_tag=quadrature_tag)
-            + sponge(cv=fluid_state.cv, cv_ref=ref_cv, sigma=sponge_sigma)
-        )
+        fluid_rhs, wall_rhs = coupled_ns_heat_operator(
+            discr,
+            gas_model, wall_model,
+            dd_vol_fluid, dd_vol_wall,
+            fluid_boundaries, wall_boundaries,
+            fluid_state, wall_temperature,
+            time=t,
+            use_av=True,
+            av_kwargs={
+                "alpha": alpha_field,
+                "s0": s0_sc,
+                "kappa": kappa_sc,
+                "boundary_kwargs": {
+                    "time": t,
+                    "gas_model": gas_model}},
+            wall_time_scale=wall_time_scale, wall_penalty_amount=wall_penalty_amount,
+            quadrature_tag=quadrature_tag)
+        fluid_rhs += sponge(cv=fluid_state.cv, cv_ref=ref_cv, sigma=sponge_sigma)
+        return make_obj_array([fluid_rhs, wall_rhs])
 
-    current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,
-                                  current_cfl, t_final, constant_cfl)
+    current_dt = get_sim_timestep(
+        discr, current_fluid_state, current_t, current_dt, current_cfl, t_final,
+        constant_cfl, fluid_volume_dd=dd_vol_fluid)
 
-    current_step, current_t, current_cv = \
+    current_step, current_t, current_state = \
         advance_state(rhs=my_rhs, timestepper=timestepper,
                       pre_step_callback=my_pre_step,
                       post_step_callback=my_post_step,
                       istep=current_step, dt=current_dt,
                       t=current_t, t_final=t_final,
-                      state=current_state.cv)
-    current_state = make_fluid_state(current_cv, gas_model)
+                      state=current_state)
+    current_fluid_state = make_fluid_state(current_state[0], gas_model)
+    current_wall_temperature = current_state[1]
 
     # Dump the final data
     if rank == 0:
         logger.info("Checkpointing final state ...")
-    final_dv = current_state.dv
-    alpha_field = my_get_alpha(discr, current_state, alpha_sc)
-    ts_field, cfl, dt = my_get_timestep(t=current_t, dt=current_dt,
-                                        state=current_state, alpha=alpha_field)
+    final_dv = current_fluid_state.dv
+    alpha_field = my_get_alpha(discr, current_fluid_state, alpha_sc)
+    ts_field, cfl, dt = my_get_timestep(
+        t=current_t, dt=current_dt, fluid_state=current_fluid_state,
+        alpha=alpha_field)
     my_write_status(dt=dt, cfl=cfl, dv=final_dv)
 
-    my_write_viz(step=current_step, t=current_t, cv=current_state.cv, dv=final_dv,
-                 ts_field=ts_field, alpha_field=alpha_field)
-    my_write_restart(step=current_step, t=current_t, cv=current_state.cv)
+    my_write_viz(
+        step=current_step, t=current_t, fluid_state=current_fluid_state,
+        wall_temperature=current_wall_temperature, ts_field=ts_field,
+        alpha_field=alpha_field)
+    my_write_restart(step=current_step, t=current_t, state=current_state)
 
     if logmgr:
         logmgr.close()
