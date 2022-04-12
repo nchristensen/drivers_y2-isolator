@@ -4,7 +4,7 @@
 mirge_branch="production"
 mirge_fork="illinois-ceesd"
 # conda environment name
-conda_env="mirgeDriver.Y2isolator"
+conda_env="emirge-isolator-wall3"
 
 usage()
 {
