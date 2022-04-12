@@ -42,7 +42,7 @@ from arraycontext import thaw, freeze
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
 from grudge.shortcuts import make_visualizer
-from grudge.dof_desc import DTAG_BOUNDARY
+from grudge.dof_desc import DTAG_BOUNDARY  # pylint: disable=no-name-in-module
 #from grudge.op import nodal_max, nodal_min
 from logpyle import IntervalTimer, set_dt
 from mirgecom.logging_quantities import (
