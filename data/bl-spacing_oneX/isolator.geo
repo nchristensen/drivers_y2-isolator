@@ -477,14 +477,32 @@ p_cavity_front_upper = p++;
 Point(p_cavity_front_upper) = {0.65163,-0.0083245,0.0,basesize};
 
 //Bottom of cavity
+x_cavity_rl = 0.70163;
+x_cavity_ru = x_cavity_rl + 0.02;
+y_cavity_l = -0.0283245;
+y_cavity_u = -0.0083245;
 p_cavity_front_lower = p++;
 p_cavity_rear_lower = p++;
 p_cavity_rear_upper = p++;
 p_expansion_start = p++;
-Point(p_cavity_front_lower) = {0.65163,-0.0283245,0.0,basesize};
-Point(p_cavity_rear_lower) = {0.70163,-0.0283245,0.0,basesize};
-Point(p_cavity_rear_upper) = {0.72163,-0.0083245,0.0,basesize};
-Point(p_expansion_start) = {0.72163+0.02,-0.0083245,0.0,basesize};
+Point(p_cavity_front_lower) = {0.65163,y_cavity_l,0.0,basesize};
+Point(p_cavity_rear_lower) = {x_cavity_rl,y_cavity_l,0.0,basesize};
+Point(p_cavity_rear_upper) = {x_cavity_ru,y_cavity_u,0.0,basesize};
+Point(p_expansion_start) = {x_cavity_ru+0.02,y_cavity_u,0.0,basesize};
+
+//Wall
+p_wall_insert_front_lower = p++;
+p_wall_insert_front_upper = p++;
+p_wall_insert_rear_lower = p++;
+p_wall_insert_rear_upper = p++;
+p_wall_surround_front_lower = p++;
+p_wall_surround_rear_lower = p++;
+Point(p_wall_insert_front_lower) = {x_cavity_ru-0.01,y_cavity_u-0.012,0.0,basesize};
+Point(p_wall_insert_front_upper) = {x_cavity_ru-0.01,y_cavity_u-0.01,0.0,basesize};
+Point(p_wall_insert_rear_lower) = {x_cavity_ru+0.01,y_cavity_u-0.012,0.0,basesize};
+Point(p_wall_insert_rear_upper) = {x_cavity_ru+0.01,y_cavity_u,0.0,basesize};
+Point(p_wall_surround_front_lower) = {x_cavity_ru-0.0144,y_cavity_u-0.0144,0.0,basesize};
+Point(p_wall_surround_rear_lower) = {x_cavity_ru+0.02,y_cavity_u-0.0144,0.0,basesize};
 
 //Extend downstream a bit
 p_outlet_lower = p++;
@@ -498,15 +516,31 @@ Point(p_outlet_upper) = {0.65163+0.335,0.01167548819733,0.0,basesize};
 l_isolator_to_cavity = l++;
 l_cavity_front = l++;
 l_cavity_bottom = l++;
-l_cavity_rear = l++;
-l_postcavity_flat = l++;
+l_cavity_rear_1 = l++;
+l_cavity_rear_2 = l++;
+l_cavity_rear_3 = l++;
+l_postcavity_flat_1 = l++;
+l_postcavity_flat_2 = l++;
 l_bottom_expansion = l++;
+l_wall_insert_front = l++;
+l_wall_insert_bottom = l++;
+l_wall_insert_rear = l++;
+l_wall_surround_bottom = l++;
+l_wall_surround_rear = l++;
 Line(l_isolator_to_cavity) = {p_nozzle_bottom_end,p_cavity_front_upper};
 Line(l_cavity_front) = {p_cavity_front_upper,p_cavity_front_lower};
 Line(l_cavity_bottom) = {p_cavity_front_lower,p_cavity_rear_lower};
-Line(l_cavity_rear) = {p_cavity_rear_lower,p_cavity_rear_upper};
-Line(l_postcavity_flat) = {p_cavity_rear_upper,p_expansion_start};
+Line(l_cavity_rear_1) = {p_cavity_rear_lower,p_wall_surround_front_lower};
+Line(l_cavity_rear_2) = {p_wall_surround_front_lower,p_wall_insert_front_upper};
+Line(l_cavity_rear_3) = {p_wall_insert_front_upper,p_cavity_rear_upper};
+Line(l_postcavity_flat_1) = {p_cavity_rear_upper,p_wall_insert_rear_upper};
+Line(l_postcavity_flat_2) = {p_wall_insert_rear_upper,p_expansion_start};
 Line(l_bottom_expansion) = {p_expansion_start,p_outlet_lower};
+Line(l_wall_insert_front) = {p_wall_insert_front_upper,p_wall_insert_front_lower};
+Line(l_wall_insert_bottom) = {p_wall_insert_front_lower,p_wall_insert_rear_lower};
+Line(l_wall_insert_rear) = {p_wall_insert_rear_lower,p_wall_insert_rear_upper};
+Line(l_wall_surround_bottom) = {p_wall_surround_front_lower,p_wall_surround_rear_lower};
+Line(l_wall_surround_rear) = {p_wall_surround_rear_lower,p_expansion_start};
 
 //Outlet
 l_outlet = l++;
@@ -517,24 +551,7 @@ l_postnozzle_top = l++;
 //Line(l_postnozzle_top) = {p_nozzle_top_end,p_outlet_upper};  // goes clockwise
 Line(l_postnozzle_top) = {p_outlet_upper,p_nozzle_top_end};  // goes counter-clockwise
 
-
-//Create lineloop of this geometry
-// start on the bottom left and go around counter clockwise
-//Curve Loop(1) = {
-//l_nozzle_bottom,
-//l_isolator_to_cavity,
-//l_cavity_front,
-//l_cavity_bottom,
-//l_cavity_rear,
-//l_postcavity_flat,
-//l_bottom_expansion,
-//l_outlet,
-//l_postnozzle_top,
-//-l_nozzle_top,
-//l_inlet
-//};
-
-//Create lineloop of this geometry
+//Create lineloop of fluid region
 // start on the bottom left and go around clockwise
 Curve Loop(1) = {
 -l_inlet,
@@ -542,30 +559,67 @@ l_nozzle_top,
 -l_postnozzle_top,
 -l_outlet,
 -l_bottom_expansion,
--l_postcavity_flat,
--l_cavity_rear,
+-l_postcavity_flat_2,
+-l_postcavity_flat_1,
+-l_cavity_rear_3,
+-l_cavity_rear_2,
+-l_cavity_rear_1,
 -l_cavity_bottom,
 -l_cavity_front,
 -l_isolator_to_cavity,
 -l_nozzle_bottom
 };
 
-Plane Surface(1) = {1};
+//Create lineloops of wall regions
+// start on the bottom left and go around clockwise
+// Insert
+Curve Loop(2) = {
+-l_wall_insert_front,
+l_cavity_rear_3,
+l_postcavity_flat_1,
+-l_wall_insert_rear,
+-l_wall_insert_bottom
+};
+// Surround
+Curve Loop(3) = {
+l_cavity_rear_2,
+l_wall_insert_front,
+l_wall_insert_bottom,
+l_wall_insert_rear,
+l_postcavity_flat_2,
+-l_wall_surround_rear,
+-l_wall_surround_bottom
+};
 
-Physical Surface('domain') = {1};
+Plane Surface(1) = {1};
+Plane Surface(2) = {2};
+Plane Surface(3) = {3};
+
+Physical Surface('fluid') = {1};
+Physical Surface('wall insert') = {2};
+Physical Surface('wall surround') = {3};
 
 Physical Curve('inflow') = {-l_inlet};
 Physical Curve('outflow') = {l_outlet};
-Physical Curve('wall') = {
+Physical Curve('isothermal') = {
 l_nozzle_top,
 l_nozzle_bottom,
 l_isolator_to_cavity,
 l_cavity_front,
 l_cavity_bottom,
-l_cavity_rear,
-l_postcavity_flat,
+l_cavity_rear_1,
 l_bottom_expansion,
 l_postnozzle_top
+};
+Physical Curve('fluid wall interface') = {
+l_cavity_rear_2,
+l_cavity_rear_3,
+l_postcavity_flat_1,
+l_postcavity_flat_2
+};
+Physical Curve('wall far-field') = {
+l_wall_surround_bottom,
+l_wall_surround_rear
 };
 
 // Create distance field from curves, excludes cavity
@@ -574,7 +628,8 @@ Field[1].CurvesList = {
   l_nozzle_top,
   l_nozzle_bottom,
   l_isolator_to_cavity,
-  l_postcavity_flat,
+  l_postcavity_flat_1,
+  l_postcavity_flat_2,
   l_bottom_expansion,
   l_postnozzle_top
 };
@@ -591,7 +646,13 @@ Field[2].StopAtDistMax = 1;
 
 // Create distance field from curves, cavity only
 Field[11] = Distance;
-Field[11].CurvesList = {l_cavity_front,l_cavity_bottom,l_cavity_rear};
+Field[11].CurvesList = {
+  l_cavity_front,
+  l_cavity_bottom,
+  l_cavity_rear_1,
+  l_cavity_rear_2,
+  l_cavity_rear_3
+};
 Field[11].NumPointsPerCurve = 100000;
 
 //Create threshold field that varrries element size near boundaries
@@ -602,6 +663,24 @@ Field[12].SizeMax = cavitysize;
 Field[12].DistMin = 0.0002;
 Field[12].DistMax = 0.005;
 Field[12].StopAtDistMax = 1;
+
+// Create distance field from curves, inside wall only
+Field[13] = Distance;
+Field[13].CurvesList = {
+  l_wall_insert_front,
+  l_wall_insert_bottom,
+  l_wall_insert_rear
+};
+Field[13].NumPointsPerCurve = 100000;
+
+//Create threshold field that varrries element size near boundaries
+Field[14] = Threshold;
+Field[14].InField = 13;
+Field[14].SizeMin = cavitysize / boundratio;
+Field[14].SizeMax = cavitysize;
+Field[14].DistMin = 0.0002;
+Field[14].DistMax = 0.005;
+Field[14].StopAtDistMax = 1;
 
 nozzle_start = 0.27;
 nozzle_end = 0.30;
@@ -648,7 +727,7 @@ Field[6].VOut = bigsize;
 
 // take the minimum of all defined meshing fields
 Field[100] = Min;
-Field[100].FieldsList = {2, 3, 4, 5, 6, 12};
+Field[100].FieldsList = {2, 3, 4, 5, 6, 12, 14};
 Background Field = 100;
 
 Mesh.MeshSizeExtendFromBoundary = 0;
