@@ -270,6 +270,17 @@ def get_theta_from_data(data):
     return(theta)
 
 
+def smooth_step(actx, x, epsilon=1e-12):
+    # return actx.np.tanh(x)
+    # return actx.np.where(
+    #     actx.np.greater(x, 0),
+    #     actx.np.tanh(x)**3,
+    #     0*x)
+    return (
+        actx.np.greater(x, 0) * actx.np.less(x, 1) * (1 - actx.np.cos(np.pi*x))/2
+        + actx.np.greater(x, 1))
+
+
 class InitACTII:
     r"""Solution initializer for flow in the ACT-II facility
 
@@ -458,15 +469,16 @@ class InitACTII:
         # isothermal boundaries
         sigma = self._temp_sigma
         wall_temperature = self._temp_wall
-        smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
-        smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
+        smoothing_top = smooth_step(actx, -sigma*(ypos-ytop))
+        smoothing_bottom = smooth_step(
+            actx, sigma*actx.np.abs(ypos-ybottom))
         smoothing_fore = ones
         smoothing_aft = ones
         z0 = 0.
         z1 = 0.035
         if self._dim == 3:
-            smoothing_fore = actx.np.tanh(sigma*(actx.np.abs(zpos-z0)))
-            smoothing_aft = actx.np.tanh(sigma*(actx.np.abs(zpos-z1)))
+            smoothing_fore = smooth_step(actx, sigma*(zpos-z0))
+            smoothing_aft = smooth_step(actx, -sigma*(zpos-z1))
 
         smooth_temperature = (wall_temperature +
             (temperature - wall_temperature)*smoothing_top*smoothing_bottom *
@@ -491,16 +503,16 @@ class InitACTII:
         # the magnitude
         velocity[0] = mach*actx.np.sqrt(gamma*pressure/mass)
 
-        # modify the velocity in the near-wall region to have a tanh profile
+        # modify the velocity in the near-wall region to have a smooth profile
         # this approximates the BL velocity profile
         sigma = self._vel_sigma
-        smoothing_top = actx.np.tanh(sigma*(actx.np.abs(ypos-ytop)))
-        smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-ybottom)))
+        smoothing_top = smooth_step(actx, -sigma*(ypos-ytop))
+        smoothing_bottom = smooth_step(actx, sigma*(actx.np.abs(ypos-ybottom)))
         smoothing_fore = ones
         smoothing_aft = ones
         if self._dim == 3:
-            smoothing_fore = actx.np.tanh(sigma*(actx.np.abs(zpos-z0)))
-            smoothing_aft = actx.np.tanh(sigma*(actx.np.abs(zpos-z1)))
+            smoothing_fore = smooth_step(actx, sigma*(zpos-z0))
+            smoothing_aft = smooth_step(actx, -sigma*(zpos-z1))
         velocity[0] = (velocity[0]*smoothing_top*smoothing_bottom *
                        smoothing_fore*smoothing_aft)
 
@@ -526,11 +538,11 @@ class InitACTII:
 
         # smooth the temperature at the cavity walls
         sigma = self._temp_sigma
-        smoothing_front = actx.np.tanh(sigma*(actx.np.abs(xpos-xc_left)))
-        smoothing_bottom = actx.np.tanh(sigma*(actx.np.abs(ypos-yc_bottom)))
+        smoothing_front = smooth_step(actx, sigma*(xpos-xc_left))
+        smoothing_bottom = smooth_step(actx, sigma*(ypos-yc_bottom))
         wall_dist = (wall_theta*(ypos - yc_bottom) -
                      wall_theta*(xpos - xc_bottom))
-        smoothing_slant = actx.np.tanh(sigma*(actx.np.abs(wall_dist)))
+        smoothing_slant = smooth_step(actx, sigma*wall_dist)
         cavity_temperature = (wall_temperature +
             (temperature - wall_temperature) *
              smoothing_front*smoothing_bottom*smoothing_slant)
@@ -651,8 +663,8 @@ class UniformModified:
         # the isothermal boundaries
         sigma = self._temp_sigma
         wall_temperature = self._temp_wall
-        smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
-        smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
+        smoothing_min = smooth_step(actx, sigma*(ypos-ymin))
+        smoothing_max = smooth_step(actx, -sigma*(ypos-ymax))
         temperature = (wall_temperature +
                        (temperature - wall_temperature)*smoothing_min*smoothing_max)
 
@@ -668,8 +680,8 @@ class UniformModified:
 
         sigma = self._vel_sigma
         # modify the velocity profile from uniform
-        smoothing_max = actx.np.tanh(sigma*(actx.np.abs(ypos-ymax)))
-        smoothing_min = actx.np.tanh(sigma*(actx.np.abs(ypos-ymin)))
+        smoothing_max = smooth_step(actx, -sigma*(ypos-ymax))
+        smoothing_min = smooth_step(actx, sigma*(ypos-ymin))
         velocity[0] = velocity[0]*smoothing_max*smoothing_min
 
         mom = mass*velocity
@@ -1045,8 +1057,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     geometry_top = comm.bcast(geometry_top, root=0)
 
     # parameters to adjust the shape of the initialization
-    vel_sigma = 2000
-    temp_sigma = 2500
+#     vel_sigma = 2000
+#     temp_sigma = 2500
+    vel_sigma = 500
+    temp_sigma = 625
+#     vel_sigma = 1000
+#     temp_sigma = 1250
     temp_wall = 300
 
     bulk_init = InitACTII(dim=dim,
