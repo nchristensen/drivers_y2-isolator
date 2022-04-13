@@ -2,9 +2,9 @@
 
 # default branch for building mirgecom for this driver
 mirge_fork="majosm"
-mirge_branch="multiphysics-production"
+mirge_branch="multiphysics-production-error"
 # conda environment name
-conda_env="emirge-isolator-wall3"
+conda_env="emirge-isolator-wall"
 
 usage()
 {
