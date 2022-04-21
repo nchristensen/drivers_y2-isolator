@@ -7,9 +7,9 @@ t_final: 2.e-8
 order:  2
 dimen: 2
 mach_inj: 0.8
-#nspecies: 7
+nspecies: 7
 #nspecies: 2
-nspecies: 0
+#nspecies: 0
 vel_sigma: 500
 temp_sigma: 1250
 vel_sigma_inj: 5000
@@ -20,5 +20,9 @@ kappa_sc: 0.5
 integrator: euler
 #health_pres_min: 1
 #health_pres_max: 500000
-health_pres_min: 2.85013e3
-health_pres_max: 2.84839e5
+#health_mass_frac_min: -1
+#health_mass_frac_max: 10
+health_pres_min: 2.86403e3
+health_pres_max: 2.74367e5
+health_mass_frac_min: -1.e-6
+health_mass_frac_max: 0.7271
