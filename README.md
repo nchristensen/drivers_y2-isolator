@@ -83,15 +83,9 @@ Clone emirge and install with eager autotuning branches
 ./install.sh --fork=nchristensen --branch=production --conda-prefix=PATHTOCONDA
 ```
 
-Change to preferred directory and clone y2-isolator with autotuning driver.
-```
-git clone git@github.com:nchristensen/drivers_y2-isolator.git
-```
-
 Install charm4py
 
 ```
-cd <Appropriate directory>
 pip install cython
 git clone git@github.com:UIUC-PPL/charm4py.git
 cd charm4py
@@ -103,7 +97,12 @@ pip install .
 ```
 
 The setup will build charm++ but may not move it to the appropriate directory.
-You may need to move it and then re-run `pip install .` 
+You may need to move it and then re-run `pip install .`
+
+Change to preferred directory and clone y2-isolator with autotuning driver.
+```
+git clone git@github.com:nchristensen/drivers_y2-isolator.git
+```
 
 ### Running
 
