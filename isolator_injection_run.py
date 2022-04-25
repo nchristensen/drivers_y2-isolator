@@ -817,8 +817,8 @@ def main(ctx_factory=cl.create_some_context,
         DTAG_BOUNDARY("injection"): ref_state,
         DTAG_BOUNDARY("wall"): wall
     }
-    from mirgecom.simutil import boundary_report
-    boundary_report(discr, boundaries, f"{casename}_boundaries_np{nparts}.yaml")
+    #from mirgecom.simutil import boundary_report
+    #boundary_report(discr, boundaries, f"{casename}_boundaries_np{nparts}.yaml")
 
     visualizer = make_visualizer(discr)
 
@@ -929,7 +929,9 @@ def main(ctx_factory=cl.create_some_context,
             health_error = True
             p_min = vol_min(dv.pressure)
             p_max = vol_max(dv.pressure)
-            logger.info(f"Pressure range violation ({p_min=}, {p_max=})")
+            logger.info(f"Pressure range violation: "
+                        f"Simulation Range ({p_min=}, {p_max=}) "
+                        f"Specified Limits ({health_pres_min=}, {health_pres_max=})")
 
         if global_reduce(check_range_local(discr, "vol", dv.temperature,
                                      health_temp_min, health_temp_max),
@@ -937,7 +939,9 @@ def main(ctx_factory=cl.create_some_context,
             health_error = True
             t_min = vol_min(dv.temperature)
             t_max = vol_max(dv.temperature)
-            logger.info(f"Temperature range violation ({t_min=}, {t_max=})")
+            logger.info(f"Temperature range violation: "
+                        f"Simulation Range ({t_min=}, {t_max=}) "
+                        f"Specified Limits ({health_temp_min=}, {health_temp_max=})")
 
         for i in range(nspecies):
             if global_reduce(check_range_local(discr, "vol",

@@ -16,7 +16,9 @@ kappa_sc: 0.5
 integrator: euler
 #health_pres_min: 1
 #health_pres_max: 500000
-health_pres_min: 2.85013e3
-health_pres_max: 2.84839e5
-health_mass_frac_min: -1.82e-9
+#health_mass_frac_min: -1
+#health_mass_frac_max: 10
+health_pres_min: 2.85350e3
+health_pres_max: 2.74496e5
+health_mass_frac_min: -2.e-6
 health_mass_frac_max: 1.0001

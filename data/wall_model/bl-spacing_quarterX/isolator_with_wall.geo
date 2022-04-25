@@ -1,0 +1,1 @@
+../isolator_with_wall.geo

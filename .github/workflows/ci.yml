@@ -37,6 +37,8 @@ jobs:
             [[ $(uname) == Linux ]] && sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev
             [[ $(uname) == Darwin ]] && brew update && brew install mpich
             ./buildMirge.sh
+            cd emirge
+            ./version.sh
 
         - name: Run pylint
           run: |
