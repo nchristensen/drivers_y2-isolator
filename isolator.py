@@ -692,6 +692,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
          use_profiling=False, use_logmgr=True, user_input_file=None,
          use_overintegration=False, actx_class=None, casename=None,
          lazy=False):
+    from time import time
+    setup_start = time()
 
     if actx_class is None:
         raise RuntimeError("Array context class missing.")
@@ -716,7 +718,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     logger.addHandler(h2)
 
     """Drive the Y0 example."""
-    cl_ctx = ctx_factory()
+    cl_ctx = cl.Context(dev_type=cl.device_type.GPU)
+    #cl_ctx = ctx_factory()
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -781,7 +784,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     health_pres_max = 2.0e6
 
     # discretization and model control
-    order = 1
+    order = 2
     alpha_sc = 0.3
     s0_sc = -5.0
     kappa_sc = 0.5
@@ -1235,8 +1238,8 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                       ("alpha", alpha_field),
                       ("tagged_cells", tagged_cells),
                       ("dt" if constant_cfl else "cfl", ts_field)]
-        write_visfile(discr, viz_fields, visualizer, vizname=vizname,
-                      step=step, t=t, overwrite=True)
+        #write_visfile(discr, viz_fields, visualizer, vizname=vizname,
+        #              step=step, t=t, overwrite=True)
 
     def my_write_restart(step, t, cv):
         restart_fname = restart_pattern.format(cname=casename, step=step, rank=rank)
@@ -1250,7 +1253,7 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                 "global_nelements": global_nelements,
                 "num_parts": nparts
             }
-            write_restart_file(actx, restart_data, restart_fname, comm)
+            #write_restart_file(actx, restart_data, restart_fname, comm)
 
     def my_health_check(dv):
         health_error = False
@@ -1431,9 +1434,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
             + sponge(cv=fluid_state.cv, cv_ref=ref_cv, sigma=sponge_sigma)
         )
 
+
     current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,
                                   current_cfl, t_final, constant_cfl)
 
+    setup_end = time()
+    run_start = time()
     current_step, current_t, current_cv = \
         advance_state(rhs=my_rhs, timestepper=timestepper,
                       pre_step_callback=my_pre_step,
@@ -1442,6 +1448,9 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
                       t=current_t, t_final=t_final,
                       state=current_state.cv)
     current_state = make_fluid_state(current_cv, gas_model)
+    run_end = time()
+
+    print("Setup time |", setup_end - setup_start, "| Run time |", run_end - run_start)
 
     # Dump the final data
     if rank == 0:
@@ -1496,6 +1505,8 @@ if __name__ == "__main__":
                         help="enable lazy evaluation [OFF]")
     parser.add_argument("--overintegration", action="store_true",
         help="use overintegration in the RHS computations")
+    parser.add_argument("--autotune", action="store_true", default=False,
+                        help="enable autotuning [OFF]")
 
     args = parser.parse_args()
 
@@ -1510,9 +1521,20 @@ if __name__ == "__main__":
     if args.profile:
         if lazy:
             raise ValueError("Can't use lazy and profiling together.")
+    if lazy and args.autotune:
+        raise ValueError("Can't use lazy with autotuning yet")
 
     from grudge.array_context import get_reasonable_array_context_class
-    actx_class = get_reasonable_array_context_class(lazy=lazy, distributed=True)
+
+    if not args.autotune:
+        actx_class = get_reasonable_array_context_class(lazy=lazy, distributed=True)
+    else:
+        #from grudge.grudge_array_context import GrudgeArrayContext as actx_class
+        #from grudge.grudge_array_context import ParameterFixingPyOpenCLArrayContext as actx_class
+        #from grudge.grudge_array_context import KernelSavingArrayContext as actx_class
+        #from grudge.grudge_array_context import KernelSavingAutotuningArrayContext as actx_class
+        #from mirgecom.array_context import MirgecomAutotuningArrayContext as actx_class
+        from mirgecom.array_context import MirgecomKernelSavingAutotuningArrayContext as actx_class
 
     restart_filename = None
     if args.restart_file:
