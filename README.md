@@ -73,3 +73,73 @@ Most subdirectories contain a run.sh script that outlines how to run the problem
 
 The case can the be run similar to other MIRGE-Com applications.
 For examples see the MIRGE-Com [documentation](https://mirgecom.readthedocs.io/en/latest/running/systems.html)
+
+## Eager autotuning on Lassen
+
+### Setup
+
+Clone emirge and install with eager autotuning branches
+```
+./install.sh --fork=nchristensen --branch=production --conda-prefix=PATHTOCONDA
+```
+
+Change to preferred directory and clone y2-isolator with autotuning driver.
+```
+git clone git@github.com:nchristensen/drivers_y2-isolator.git
+```
+
+Install charm4py
+
+```
+cd <Appropriate directory>
+pip install cython
+git clone git@github.com:UIUC-PPL/charm4py.git
+cd charm4py
+mkdir charm_src
+cd charm_src
+git clone git@github.com:UIUC-PPL/charm.git
+cd ..
+pip install .
+```
+
+The setup will build charm++ but may not move it to the appropriate directory.
+You may need to move it and then re-run `pip install .` 
+
+### Running
+
+We'll interactively for this example.
+
+Request some nodes.
+```
+bsub -nnodes 4 -Ip -XF -W 240 /bin/bash
+```
+
+```
+conda activate ceesd
+cd drivers_y2-isolator/test_mesh/eager/eigthX
+```
+
+Edit `run_params.yaml` to execute a single time step and then run the the driver.
+
+```
+# Execute the driver on two nodes
+jsrun -n 2 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
+```
+
+The pickled kernels are saved in the `pickled_kernels` directory by default.
+
+Execute the autotuning script
+```
+jsrun -n 16 -a 1 -g 1 python -O -m PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_v2.py
+```
+
+The script will use n-1 GPUs to execute autotuning on each of the pickled kernels and save hjson
+transformation files in the `hjson` directory. It seems to generate occasional errors when the number of
+GPUs is large. 32 GPUs seems to work reasonably well. 
+
+With the hjson files created, run the driver again. It should now load the transformations from the hjson files
+and execute much faster.
+
+```
+jsrun -n 2 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
+```
