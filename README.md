@@ -148,3 +148,7 @@ jsrun -n 2 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotu
 The autotuner fixes the kernel parameters before pickling the kernels so multiple .pickle files will be 
 created when different ranks have different numbers of elements. Changing the number of MPI ranks will consequently
 require re-running the autotuner. To minimize the autotuning time, run the driver with as few ranks as possible.
+
+### Known issues
+Pocl CUDA kernel execution times often have only a few digits of accuracy which may mean a suboptimal set of
+transformations is selected.
