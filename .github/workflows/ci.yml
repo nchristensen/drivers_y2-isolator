@@ -38,6 +38,7 @@ jobs:
             [[ $(uname) == Darwin ]] && brew update && brew install mpich
             ./buildMirge.sh
             cd emirge
+            source config/activate_env.sh
             ./version.sh
 
         - name: Run pylint
