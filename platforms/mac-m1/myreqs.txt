@@ -1,16 +1,17 @@
 # requirements.txt created by version.sh
-# Date: Thu Apr 28 09:59:36 CDT 2022
+# Date: Thu Apr 28 11:32:39 CDT 2022
 # Host: wirelessprv-10-193-137-95.near.illinois.edu [Darwin wirelessprv-10-193-137-95.near.illinois.edu 21.2.0 Darwin Kernel Version 21.2.0: Sun Nov 28 20:29:10 PST 2021; root:xnu-8019.61.5~1/RELEASE_ARM64_T8101 arm64]
 # Python: /Users/someguy/software/Install/Conda/envs/mirgeDriver.Y2isolator/bin/python [Python 3.9.12]
---editable git+https://github.com/inducer/arraycontext.git@17dcc60#egg=arraycontext
+--editable git+https://github.com/kaushikcfd/arraycontext.git@0e7d287#egg=arraycontext
 --editable git+https://github.com/inducer/dagrt.git@v2021.1-10-gfddc6f6#egg=dagrt
---editable git+https://github.com/inducer/grudge.git@v2021.1-508-g9f0e4f7#egg=grudge
+--editable git+https://github.com/kaushikcfd/feinsum.git@2d9c2bb#egg=feinsum
+--editable git+https://github.com/kaushikcfd/grudge.git@v2021.1-507-g03125d0#egg=grudge
 --editable git+https://github.com/inducer/leap.git@60773c1#egg=leap
 --editable git+https://github.com/illinois-ceesd/logpyle.git@v2021.0-7-g42e89c8#egg=logpyle
 --editable git+https://github.com/kaushikcfd/loopy.git@389f6968#egg=loopy
 --editable git+https://github.com/kaushikcfd/meshmode.git@0c703dc#egg=meshmode
---editable git+ssh://git@github.com/illinois-ceesd/mirgecom@78c8aa3#egg=mirgecom
+--editable git+https://github.com/illinois-ceesd/mirgecom@11388b3#egg=mirgecom
 --editable git+https://github.com/inducer/modepy.git@v2021.1-72-g15d797d#egg=modepy
 --editable git+https://github.com/inducer/pymbolic.git@v2021.1-49-g1d23d56#egg=pymbolic
 --editable git+https://github.com/ecisneros8/pyrometheus.git@713db19#egg=pyrometheus
---editable git+https://github.com/inducer/pytato.git@v2021.1-551-gf21e6ab#egg=pytato
+--editable git+https://github.com/kaushikcfd/pytato.git@f80983c#egg=pytato
