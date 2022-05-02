@@ -86,6 +86,7 @@ Clone emirge and install with eager autotuning branches
 Install charm4py
 
 ```
+conda activate ceesd #Or the name the the environment you chose
 pip install cython
 git clone git@github.com:UIUC-PPL/charm4py.git
 cd charm4py
@@ -93,11 +94,12 @@ mkdir charm_src
 cd charm_src
 git clone git@github.com:UIUC-PPL/charm.git
 cd ..
-pip install .
+pip install --install-option="--mpi" .
 ```
 
-The setup will build charm++ but may not move it to the appropriate directory.
-You may need to move it and then re-run `pip install .`
+On some machines setup will build charm++ but may not move it to the appropriate directory.
+If so, you may need to move it and then re-run `pip install .` Ignore this if charm4py
+builds correctly.
 
 Change to preferred directory and clone y2-isolator with autotuning driver.
 ```
