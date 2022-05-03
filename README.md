@@ -80,6 +80,8 @@ For examples see the MIRGE-Com [documentation](https://mirgecom.readthedocs.io/e
 
 Clone emirge and install with eager autotuning branches
 ```
+git clone git@github.com:illinois-ceesd/emirge.git
+cd emirge
 ./install.sh --fork=nchristensen --branch=production --conda-prefix=PATHTOCONDA
 ```
 
@@ -88,6 +90,7 @@ Install charm4py
 ```
 conda activate ceesd #Or the name the the environment you chose
 pip install cython
+pip install greenlet
 git clone git@github.com:UIUC-PPL/charm4py.git
 cd charm4py
 mkdir charm_src
