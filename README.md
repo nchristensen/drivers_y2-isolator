@@ -120,13 +120,17 @@ bsub -nnodes 4 -Ip -XF -W 240 /bin/bash
 
 ```
 conda activate ceesd
-cd drivers_y2-isolator/test_mesh/eager/eigthX
+cd drivers_y2-isolator/test_mesh/eager/eigthX/data
+./make_mesh.sh
+cd ..
 ```
 
 Edit `run_params.yaml` to execute a single time step and then run the the driver.
 
 ```
 # Execute the driver on two nodes
+# Export OPENCL_VENDOR_PATH if necessary.
+#export OPENCL_VENDOR_PATH="$HOME/miniforge3/envs/ceesd/etc/OpenCL/vendors"
 jsrun -n 2 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
 ```
 
@@ -134,14 +138,12 @@ The pickled kernels are saved in the `pickled_kernels` directory by default.
 
 Execute the autotuning script
 ```
-jsrun -n 16 -a 1 -g 1 python -O -m PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_v2.py
+#TODO: Fix grudge install so don't need path to grudge 
+jsrun -n 16 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_v2.py
 ```
 
 The script will use n-1 GPUs to execute autotuning on each of the pickled kernels and save hjson
-transformation files in the `hjson` directory. It seems to generate occasional errors when the number of
-GPUs is large. 32 GPUs seems to work reasonably well. 
-
-With the hjson files created, run the driver again. It should now load the transformations from the hjson files
+transformation files in the `hjson` directory. With the hjson files created, run the driver again. It should now load the transformations from the hjson files
 and execute much faster.
 
 ```
@@ -156,3 +158,8 @@ require re-running the autotuner. To minimize the autotuning time, run the drive
 ### Known issues
 Pocl CUDA kernel execution times often have only a few digits of accuracy which may mean a suboptimal set of
 transformations is selected.
+
+The autotuning process seems to generate occasional errors when the number of GPUs is large. 
+32 GPUs seems to work reasonably well but some monitoring may be required currently.
+
+
