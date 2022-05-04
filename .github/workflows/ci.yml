@@ -55,7 +55,8 @@ jobs:
           run: |
             source emirge/config/activate_env.sh
             cd smoke_test
-            ./run.sh
+            ./run.sh |& tee mirge-1.out
+            ./getTiming.sh
 
         - name: Eager smoke restart test
           run: |
@@ -66,8 +67,16 @@ jobs:
         - name: Lazy smoke test
           run: |
             source emirge/config/activate_env.sh
-            cd smoke_test_lazy
-            ./run.sh
+            cd smoke_test
+            ./run_lazy.sh |& tee mirge-1.out
+            ./getTiming.sh
+
+        - name: Lazy parallel distributed smoke test
+          run: |
+            source emirge/config/activate_env.sh
+            cd smoke_test
+            ./run_lazy.sh |& tee mirge-1.out
+            ./getTiming.sh
 
         - name: Eager multi-species injection smoke test
           run: |
