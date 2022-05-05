@@ -121,7 +121,13 @@ jobs:
           run: |
             source emirge/config/activate_env.sh
             cd smoke_test_injection_3d
-            ./run_init.sh
-            ./run.sh
+            ln -sf run_params_scalar.yaml run_params.yaml
+            ./run_init_lazy.sh
+            ./run_lazy.sh
+            ./getTiming.sh
+            ln -sf run_params_multi.yaml run_params.yaml
+            ./run_init_lazy.sh
+            ./run_lazy.sh
+            ./getTiming.sh
 
 

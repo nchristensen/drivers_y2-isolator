@@ -1,0 +1,162 @@
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 252
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 10149
+remote_ranks: {1}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 6192
+<DTAG_BOUNDARY('outflow')>: 480
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 48876
+remote_ranks: {0}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 252
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 10149
+remote_ranks: {1}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 6192
+<DTAG_BOUNDARY('outflow')>: 480
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 48876
+remote_ranks: {0}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 252
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 10149
+remote_ranks: {1}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 6192
+<DTAG_BOUNDARY('outflow')>: 480
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 48876
+remote_ranks: {0}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 252
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 10149
+remote_ranks: {1}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 6192
+<DTAG_BOUNDARY('outflow')>: 480
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 48876
+remote_ranks: {0}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 252
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 10149
+remote_ranks: {1}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 6192
+<DTAG_BOUNDARY('outflow')>: 480
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 48876
+remote_ranks: {0}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 252
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 10149
+remote_ranks: {1}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 6192
+<DTAG_BOUNDARY('outflow')>: 480
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 48876
+remote_ranks: {0}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 0
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 11031
+remote_ranks: {1}
+nnodes_pb: [1032]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 564
+<DTAG_BOUNDARY('outflow')>: 420
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 60636
+remote_ranks: {0}
+nnodes_pb: [1032]
+-----
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 252
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 10149
+remote_ranks: {1}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 6192
+<DTAG_BOUNDARY('outflow')>: 480
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 48876
+remote_ranks: {0}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 0
+<DTAG_BOUNDARY('inflow')>: 252
+<DTAG_BOUNDARY('outflow')>: 0
+<DTAG_BOUNDARY('injection')>: 117
+<DTAG_BOUNDARY('wall')>: 10149
+remote_ranks: {1}
+nnodes_pb: [1020]
+-----
+nproc: 2
+rank: 1
+<DTAG_BOUNDARY('inflow')>: 6192
+<DTAG_BOUNDARY('outflow')>: 480
+<DTAG_BOUNDARY('injection')>: 0
+<DTAG_BOUNDARY('wall')>: 48876
+remote_ranks: {0}
+nnodes_pb: [1020]
+-----
