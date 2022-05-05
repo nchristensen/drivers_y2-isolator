@@ -1,5 +1,5 @@
-nviz: 10
-nrestart: 10
+nviz: 100
+nrestart: 100
 nhealth: 1
 nstatus: 1
 current_dt: 1.0e-10
