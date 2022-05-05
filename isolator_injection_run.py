@@ -413,7 +413,7 @@ def main(ctx_factory=cl.create_some_context,
         spark_center[2] = 0.035/2.
     spark_diameter = 0.0025
 
-    spark_strength = 40000000./current_dt
+    spark_strength = 30000000./current_dt
     #spark_strength = 5e-3
 
     spark_init_time = 999999999.

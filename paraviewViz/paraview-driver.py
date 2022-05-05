@@ -148,6 +148,44 @@ for n in iter:
 
     simpleSlice(dir, n, 'Y_fuel', 0.0, 1.0, camera, invert=0,
       colorScheme='Rainbow Desaturated', prefix=prefix, pixels=pixels, cbTitle='Fuel Mass Fraction')
+  elif (prefix == 'y2-cavity-multi'): # Upstream arc-heater, full geometry
+    # camera location (x, y, zoom)
+    # camera location (bigger moves right, bigger moves up , smaller to zoom in)
+    camera = [0.685, -0.005, 0.026]
+    pixels = [1300,700]
+
+    simpleSlice(dir, n, 'cv_mass', 0.02, 0.1, camera, invert=1, logScale=1,
+      colorScheme='erdc_rainbow_dark', prefix=prefix, pixels=pixels, cbTitle='Density [kg/m^3]')
+
+    simpleSlice(dir, n, 'dv_pressure', 1500.0, 10000, camera, invert=1,
+      colorScheme='GREEN-WHITE_LINEAR', prefix=prefix, pixels=pixels, cbTitle='Pressure [Pa]')
+
+    simpleSlice(dir, n, 'dv_temperature', 200.0, 1000, camera, invert=0,
+      colorScheme='Black-Body Radiation', prefix=prefix, pixels=pixels, cbTitle='Temperature [K]')
+
+    simpleSlice(dir, n, 'mach', 0.0, 3.5, camera, invert=0,
+      colorScheme='Rainbow Desaturated', prefix=prefix, pixels=pixels, cbTitle='Mach Number')
+
+    simpleSlice(dir, n, 'alpha', 0.0001, 0.1, camera, invert=0,
+      colorScheme='Blue Orange (divergent)', prefix=prefix, pixels=pixels, cbTitle='artifical viscosity (m^2/s)')
+
+    simpleSlice(dir, n, 'tagged_cells', 0.0, 1.0, camera, invert=0,
+      colorScheme='erdc_marine2gold_BW', prefix=prefix, pixels=pixels, cbTitle='Tagged Elements')
+
+    simpleSlice(dir, n, 'Y_O2', 0.0, 1.0, camera, invert=0,
+      colorScheme='Rainbow Desaturated', prefix=prefix, pixels=pixels, cbTitle='Air Mass Fraction')
+
+    simpleSlice(dir, n, 'Y_C2H4', 0.0, 1.0, camera, invert=0,
+      colorScheme='Rainbow Desaturated', prefix=prefix, pixels=pixels, cbTitle='C2H4 Mass Fraction')
+
+    simpleSlice(dir, n, 'Y_H2', 0.0, 1.0, camera, invert=0,
+      colorScheme='Rainbow Desaturated', prefix=prefix, pixels=pixels, cbTitle='H2 Mass Fraction')
+
+    simpleSlice(dir, n, 'Y_H2O', 0.0, 1.0, camera, invert=0,
+      colorScheme='Rainbow Desaturated', prefix=prefix, pixels=pixels, cbTitle='H2O Mass Fraction')
+
+    simpleSlice(dir, n, 'Y_CO', 0.0, 0.3, camera, invert=0,
+      colorScheme='Rainbow Desaturated', prefix=prefix, pixels=pixels, cbTitle='CO Mass Fraction')
   else:
     print('Unrecognized prefix: {}'.format(prefix))
 
