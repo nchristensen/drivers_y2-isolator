@@ -38,7 +38,7 @@ import pyopencl.array as cla  # noqa
 import math
 from functools import partial
 
-from arraycontext import thaw
+from arraycontext import thaw, freeze
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
 from grudge.eager import EagerDGDiscretization
 from grudge.shortcuts import make_visualizer
@@ -1100,6 +1100,7 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     current_cv = bulk_init(discr=discr, x_vec=thaw(discr.nodes(), actx),
                            eos=eos, time=0)
     current_state = make_fluid_state(current_cv, gas_model, init_temperature)
+    current_state = thaw(freeze(current_state, actx), actx)
 
     visualizer = make_visualizer(discr)
 
