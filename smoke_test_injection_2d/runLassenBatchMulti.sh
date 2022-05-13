@@ -24,4 +24,4 @@ echo "Running cold cache run"
 $jsrun_cmd bash -c 'POCL_CACHE_DIR=$POCL_CACHE_DIR_ROOT/$$ python -O -u -m mpi4py ./isolator_injection_run.py -i run_params_multi.yaml -r restart_data/isolator_init-000000 --log --lazy > mirge-multi-1.out'
 
 echo "Running hot cache run"
-$jsrun_cmd bash -c 'POCL_CACHE_DIR=$POCL_CACHE_DIR_ROOT/$$ python -O -u -m mpi4py ./isolator_injection_run.py -i run_params_multi.yaml -r restart_data/isolator_init-000000 --log --lazy > mirge-multi-1.out'
+$jsrun_cmd bash -c 'POCL_CACHE_DIR=$POCL_CACHE_DIR_ROOT/$$ python -O -u -m mpi4py ./isolator_injection_run.py -i run_params_multi.yaml -r restart_data/isolator_init-000000 --log --lazy > mirge-multi-2.out'
