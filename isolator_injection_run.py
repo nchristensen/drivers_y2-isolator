@@ -43,8 +43,7 @@ from logpyle import IntervalTimer, set_dt
 from mirgecom.logging_quantities import (
     initialize_logmgr,
     logmgr_add_cl_device_info,
-    logmgr_set_time,
-    set_sim_state
+    logmgr_set_time
 )
 
 from mirgecom.navierstokes import ns_operator
@@ -172,13 +171,6 @@ class SparkSource:
 
         return make_conserved(dim=self._dim, mass=mass, energy=energy,
                               momentum=momentum, species_mass=species_mass)
-
-
-'''
-#MJA TODO this is removed in the slimmer PR
-def sponge_source(cv, cv_ref, sigma):
-    return sigma*(cv_ref - cv)
-'''
 
 
 class InitSponge:
@@ -335,8 +327,8 @@ def main(ctx_factory=cl.create_some_context,
     spec_diff = 1e-4
     mu_override = False  # optionally read in from input
     nspecies = 0
-    pyro_temp_iter = 3 # for pyrometheus, number of newton iterations
-    pyro_temp_tol = 1.e-4 # for pyrometheus, toleranace for temperature residual
+    pyro_temp_iter = 3  # for pyrometheus, number of newton iterations
+    pyro_temp_tol = 1.e-4  # for pyrometheus, toleranace for temperature residual
 
     # rhs control
     use_ignition = False
@@ -577,7 +569,6 @@ def main(ctx_factory=cl.create_some_context,
     else:
         from mirgecom.thermochemistry import get_pyrometheus_wrapper_class
         from mirgecom.mechanisms.uiuc import Thermochemistry
-        #pyro_mech = get_pyrometheus_wrapper_class(Thermochemistry)(actx.np)
         pyro_mech = get_pyrometheus_wrapper_class(
             pyro_class=Thermochemistry, temperature_niter=pyro_temp_iter)(actx.np)
         eos = PyrometheusMixture(pyro_mech, temperature_guess=init_temperature)
@@ -768,11 +759,6 @@ def main(ctx_factory=cl.create_some_context,
                              amplitude=sponge_amp)
     x_vec = thaw(discr.nodes(), actx)
 
-    '''
-    #TODO MJA, inline sponge sigma with a compiled helper function
-    sponge_sigma = sponge_init(x_vec=x_vec)
-    '''
-
     def _sponge_sigma(x_vec):
         return sponge_init(x_vec=x_vec)
 
@@ -783,30 +769,15 @@ def main(ctx_factory=cl.create_some_context,
         """Create sponge source."""
         return sponge_sigma*(current_state.cv - cv)
 
-
-    #TODO MJA, rewrite boundary routine so avoid project at every invocation
-    # set the boundary conditions
-    '''
-    def _ref_state_func(discr, btag, gas_model, ref_state, **kwargs):
-        from mirgecom.gas_model import project_fluid_state
-        from grudge.dof_desc import DOFDesc, as_dofdesc
-        dd_base_vol = DOFDesc("vol")
-        return project_fluid_state(discr, dd_base_vol,
-                                   as_dofdesc(btag).with_discr_tag(quadrature_tag),
-                                   ref_state, gas_model)
-
-    _ref_boundary_state_func = partial(_ref_state_func, ref_state=target_state)
-    '''
-
     from mirgecom.gas_model import project_fluid_state
     from grudge.dof_desc import DOFDesc, as_dofdesc
     dd_base_vol = DOFDesc("vol")
 
     def get_target_state_on_boundary(btag):
         return project_fluid_state(
-        discr, dd_base_vol,
-        as_dofdesc(btag).with_discr_tag(quadrature_tag),
-        target_state, gas_model
+            discr, dd_base_vol,
+            as_dofdesc(btag).with_discr_tag(quadrature_tag),
+            target_state, gas_model
         )
 
     flow_ref_state = \
@@ -817,52 +788,13 @@ def main(ctx_factory=cl.create_some_context,
     def _target_flow_state_func(**kwargs):
         return flow_ref_state
 
-    flow_boundary = PrescribedFluidBoundary(boundary_state_func=_target_flow_state_func)
+    flow_boundary = PrescribedFluidBoundary(
+        boundary_state_func=_target_flow_state_func)
 
-    '''
-    inflow_ref_state = \
-        get_target_state_on_boundary(DTAG_BOUNDARY("inflow"))
-
-    def _target_inflow_state_func(**kwargs):
-        return inflow_ref_state
-
-    inflow_boundary = PrescribedFluidBoundary(boundary_state_func=_target_inflow_state_func)
-
-    outflow_ref_state = \
-        get_target_state_on_boundary(DTAG_BOUNDARY("outflow"))
-
-    def _target_outflow_state_func(**kwargs):
-        return outflow_ref_state
-
-    outflow_boundary = PrescribedFluidBoundary(boundary_state_func=_target_outflow_state_func)
-
-    injection_ref_state = \
-        get_target_state_on_boundary(DTAG_BOUNDARY("injection"))
-
-    def _target_injection_state_func(**kwargs):
-        return injection_ref_state
-
-    injection_boundary = PrescribedFluidBoundary(boundary_state_func=_target_injection_state_func)
-    '''
-
-    '''
-    target_state_boundary = PrescribedFluidBoundary(boundary_state_func=_ref_boundary_state_func)
-    '''
     wall = IsothermalWallBoundary()
 
-    '''
-    boundaries = {
-        DTAG_BOUNDARY("inflow"): inflow_boundary,
-        DTAG_BOUNDARY("outflow"): outflow_boundary,
-        DTAG_BOUNDARY("injection"): injection_boundary,
-        DTAG_BOUNDARY("wall"): wall
-    }
-    '''
-
-    # MJA TODO, lump boundaries together 
     boundaries = {
         DTAG_BOUNDARY("flow"): flow_boundary,
-        #DTAG_BOUNDARY("flow"): target_state_boundary,
         DTAG_BOUNDARY("wall"): wall
     }
     #from mirgecom.simutil import boundary_report
@@ -1005,9 +937,10 @@ def main(ctx_factory=cl.create_some_context,
 
         if nspecies > 2:
             # check the temperature convergence
-            # a single call to get_temperature_update is like taking an additional 
+            # a single call to get_temperature_update is like taking an additional
             # Newton iteration and gives us a residual
-            temp_resid = get_temperature_update_compiled(cv, dv.temperature)/dv.temperature
+            temp_resid = get_temperature_update_compiled(
+                cv, dv.temperature)/dv.temperature
             temp_err = vol_min(temp_resid)
             if temp_err > pyro_temp_tol:
                 health_error = True
@@ -1090,27 +1023,6 @@ def main(ctx_factory=cl.create_some_context,
 
         return ts_field, cfl, min(t_remaining, dt)
 
-    '''
-    def my_get_alpha(discr, state, alpha):
-        """ Scale alpha by the element characteristic length """
-        from grudge.dt_utils import characteristic_lengthscales
-        array_context = state.array_context
-        length_scales = characteristic_lengthscales(array_context, discr)
-
-        #from mirgecom.fluid import compute_wavespeed
-        #wavespeed = compute_wavespeed(eos, state)
-
-        vmag = array_context.np.sqrt(np.dot(state.velocity, state.velocity))
-        #alpha_field = alpha*wavespeed*length_scales
-        alpha_field = alpha*vmag*length_scales
-        #alpha_field = wavespeed*0 + alpha*current_step
-        #alpha_field = state.mass
-
-        return alpha_field
-     '''
-
-    #TODO MJA, calculate the length scale outside of the main stepping loop
-    # also remove discr from aux function
     from grudge.dt_utils import characteristic_lengthscales
     length_scales = characteristic_lengthscales(actx, discr)
 
@@ -1135,10 +1047,6 @@ def main(ctx_factory=cl.create_some_context,
             if logmgr:
                 logmgr.tick_before()
 
-            '''
-            alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-            '''
-            # MJA TODO, this goes with new my_get_alpha
             alpha_field = my_get_alpha(fluid_state, alpha_sc)
             ts_field, cfl, dt = my_get_timestep(t, dt, fluid_state, alpha_field)
 
@@ -1180,10 +1088,6 @@ def main(ctx_factory=cl.create_some_context,
             logmgr.tick_after()
         return state, dt
 
-
-    # TODO MJA, merge these rhs implementations back together using the flags for turning different parts on/off
-    # provide grad cv to ns_operator and av_operator so we don't have to recompute it
-
     from mirgecom.gas_model import make_operator_fluid_states
     from mirgecom.navierstokes import grad_cv_operator
 
@@ -1205,10 +1109,10 @@ def main(ctx_factory=cl.create_some_context,
 
         # Fluid CV RHS contributions
         ns_rhs = \
-        ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-            gas_model=gas_model, quadrature_tag=quadrature_tag,
-            operator_states_quad=operator_fluid_states,
-            grad_cv=grad_fluid_cv)
+            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
+                gas_model=gas_model, quadrature_tag=quadrature_tag,
+                operator_states_quad=operator_fluid_states,
+                grad_cv=grad_fluid_cv)
 
         chem_rhs = 0*cv
         if use_combustion:  # conditionals evaluated only once at compile time
@@ -1219,11 +1123,11 @@ def main(ctx_factory=cl.create_some_context,
         if use_av:
             alpha_field = sc_scale * fluid_state.speed
             av_rhs = \
-            av_laplacian_operator(discr, fluid_state=fluid_state,
-                  boundaries=boundaries, gas_model=gas_model,
-                  time=t, alpha=alpha_field, s0=s0_sc,
-                  kappa=kappa_sc, quadrature_tag=quadrature_tag,
-                        operator_states_quad=operator_fluid_states)
+                av_laplacian_operator(discr, fluid_state=fluid_state,
+                    boundaries=boundaries, gas_model=gas_model,
+                    time=t, alpha=alpha_field, s0=s0_sc,
+                    kappa=kappa_sc, quadrature_tag=quadrature_tag,
+                    operator_states_quad=operator_fluid_states)
 
         sponge_rhs = 0*cv
         if use_sponge:
@@ -1236,80 +1140,8 @@ def main(ctx_factory=cl.create_some_context,
         cv_rhs = ns_rhs + chem_rhs + av_rhs + sponge_rhs + ignition_rhs
         return make_obj_array([cv_rhs, tseed_rhs])
 
-    '''
-    def my_rhs_without_combustion(t, state):
-        cv, tseed = state
-        fluid_state = make_fluid_state(cv=cv, gas_model=gas_model,
-                                       temperature_seed=tseed)
-        alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-        cv_rhs = (
-            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + av_laplacian_operator(discr, fluid_state=fluid_state,
-                                    boundaries=boundaries,
-                                    boundary_kwargs={"time": t,
-                                                     "gas_model": gas_model},
-                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
-                                    quadrature_tag=quadrature_tag)
-            + sponge_source(cv=fluid_state.cv, cv_ref=target_cv, sigma=sponge_sigma)
-        )
-        return make_obj_array([cv_rhs, 0*tseed])
-    '''
-
-    '''
-    def my_rhs_with_combustion(t, state):
-        cv, tseed = state
-        fluid_state = make_fluid_state(cv=cv, gas_model=gas_model,
-                                       temperature_seed=tseed)
-        alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-        cv_rhs = (
-            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + eos.get_species_source_terms(cv,
-                                           temperature=fluid_state.temperature)
-            + av_laplacian_operator(discr, fluid_state=fluid_state,
-                                    boundaries=boundaries,
-                                    boundary_kwargs={"time": t,
-                                                     "gas_model": gas_model},
-                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
-                                    quadrature_tag=quadrature_tag)
-            + sponge_source(cv=cv, cv_ref=restart_cv, sigma=sponge_sigma)
-        )
-        return make_obj_array([cv_rhs, 0*tseed])
-
-    def my_rhs_with_ignition(t, state):
-        cv, tseed = state
-        fluid_state = make_fluid_state(cv=cv, gas_model=gas_model,
-                                       temperature_seed=tseed)
-        alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-        cv_rhs = (
-            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + eos.get_species_source_terms(cv,
-                                           temperature=fluid_state.temperature)
-            + av_laplacian_operator(discr, fluid_state=fluid_state,
-                                    boundaries=boundaries,
-                                    boundary_kwargs={"time": t,
-                                                     "gas_model": gas_model},
-                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
-                                    quadrature_tag=quadrature_tag)
-            + ignition_source(x_vec=x_vec, cv=cv, time=t)
-            + sponge_source(cv=cv, cv_ref=restart_cv, sigma=sponge_sigma)
-        )
-        return make_obj_array([cv_rhs, 0*tseed])
-    '''
-
     current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,
                                   current_cfl, t_final, constant_cfl)
-
-    '''
-    my_rhs = my_rhs_without_combustion
-    if nspecies > 2:
-        if use_ignition:
-            my_rhs = my_rhs_with_ignition
-        else:
-            my_rhs = my_rhs_with_combustion
-    '''
 
     current_step, current_t, stepper_state = \
         advance_state(rhs=my_rhs, timestepper=timestepper,
@@ -1319,21 +1151,13 @@ def main(ctx_factory=cl.create_some_context,
                       t=current_t, t_final=t_final,
                       state=make_obj_array([current_state.cv, temperature_seed]))
     current_cv, tseed = stepper_state
-    # TODO MJA, use compiled version, also rename so we can tell the difference
-    '''
     current_state = create_fluid_state(current_cv, tseed)
-    '''
-    current_state = make_fluid_state(current_cv, gas_model, tseed)
 
     # Dump the final data
     if rank == 0:
         logger.info("Checkpointing final state ...")
     final_dv = current_state.dv
-    # TODO MJA, goes with new my_get_alpha
     alpha_field = my_get_alpha(current_state, alpha_sc)
-    '''
-    alpha_field = my_get_alpha(discr, current_state, alpha_sc)
-    '''
     ts_field, cfl, dt = my_get_timestep(t=current_t, dt=current_dt,
                                         state=current_state, alpha=alpha_field)
     my_write_status(dt=dt, cfl=cfl, cv=current_state.cv, dv=final_dv)
