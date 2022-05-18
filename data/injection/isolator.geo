@@ -569,6 +569,7 @@ Physical Surface('domain') = {-1};
 Physical Curve('inflow') = {-423};
 Physical Curve('injection') = {-502};
 Physical Curve('outflow') = {456};
+Physical Curve('flow') = {-423, -502, 456};
 Physical Curve('wall') = {
 //1:211,
 1000,

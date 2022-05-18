@@ -8,8 +8,7 @@ order:  2
 dimen: 2
 mach_inj: 0.8
 nspecies: 7
-#nspecies: 2
-#nspecies: 0
+pyro_temp_iter: 1
 vel_sigma: 500
 temp_sigma: 1250
 vel_sigma_inj: 5000

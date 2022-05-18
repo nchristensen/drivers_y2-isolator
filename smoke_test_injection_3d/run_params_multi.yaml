@@ -8,8 +8,7 @@ order:  1
 dimen: 3
 mach_inj: 0.8
 nspecies: 7
-#nspecies: 2
-#nspecies: 0
+pyro_temp_iter: 1
 alpha_sc: 0.1
 s0_sc: -5.0
 kappa_sc: 0.5
