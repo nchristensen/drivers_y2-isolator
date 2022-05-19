@@ -896,6 +896,13 @@ def main(ctx_factory=cl.create_some_context,
         viz_fields.extend(
             ("Y_"+species_names[i], cv.species_mass_fractions[i])
             for i in range(nspecies))
+
+        if nspecies > 2:
+            temp_resid = get_temperature_update_compiled(
+                cv, dv.temperature)/dv.temperature
+            viz_ext = [("temp_resid", temp_resid)]
+            viz_fields.extend(viz_ext)
+
         write_visfile(discr, viz_fields, visualizer, vizname=vizname,
                       step=step, t=t, overwrite=True)
 
@@ -959,7 +966,8 @@ def main(ctx_factory=cl.create_some_context,
             if temp_err > pyro_temp_tol:
                 health_error = True
                 #error = thaw(freeze(temp_err, actx), actx)
-                logger.info(f"Temperature is not converged {temp_resid=}.")
+                logger.info(f"Temperature is not converged "
+                            f"{temp_err=} > {pyro_temp_tol}.")
 
         return health_error
 
