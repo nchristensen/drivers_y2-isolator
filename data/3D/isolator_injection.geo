@@ -598,6 +598,11 @@ Physical Volume("fluid_domain") = union[0];
 Physical Surface("inflow") = surface_vector_full[5]; // inlet
 Physical Surface("outflow") = surface_vector_full[10]; // outlet
 Physical Surface("injection") = surface_vector_full[14]; // injection
+Physical Surface("flow") = {
+    surface_vector_full[5],
+    surface_vector_full[10],
+    surface_vector_full[14]
+};
 Physical Surface('wall') = {
 surface_vector_full[0], // isolator bottom
 surface_vector_full[1], // nozzle bottom

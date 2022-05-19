@@ -676,7 +676,8 @@ def main(ctx_factory=cl.create_some_context,
     def get_temperature_update(cv, temperature):
         y = cv.species_mass_fractions
         e = gas_model.eos.internal_energy(cv)/cv.mass
-        return pyro_mech.get_temperature_update_energy(e, temperature, y)
+        return actx.np.abs(
+            pyro_mech.get_temperature_update_energy(e, temperature, y))
 
     get_temperature_update_compiled = actx.compile(get_temperature_update)
 
@@ -836,12 +837,12 @@ def main(ctx_factory=cl.create_some_context,
 
     def my_write_status(cv, dv, dt, cfl):
         status_msg = f"-------- dt = {dt:1.3e}, cfl = {cfl:1.4f}"
-        temperature = thaw(freeze(dv.temperature, actx), actx)
-        pressure = thaw(freeze(dv.pressure, actx), actx)
-        p_min = vol_min(pressure)
-        p_max = vol_max(pressure)
-        t_min = vol_min(temperature)
-        t_max = vol_max(temperature)
+        #temperature = thaw(freeze(dv.temperature, actx), actx)
+        #pressure = thaw(freeze(dv.pressure, actx), actx)
+        p_min = vol_min(dv.pressure)
+        p_max = vol_max(dv.pressure)
+        t_min = vol_min(dv.temperature)
+        t_max = vol_max(dv.temperature)
 
         from pytools.obj_array import obj_array_vectorize
         y_min = obj_array_vectorize(lambda x: vol_min(x),
@@ -853,6 +854,19 @@ def main(ctx_factory=cl.create_some_context,
             f"\n-------- P (min, max) (Pa) = ({p_min:1.9e}, {p_max:1.9e})")
         dv_status_msg += (
             f"\n-------- T (min, max) (K)  = ({t_min:7g}, {t_max:7g})")
+
+        if nspecies > 2:
+            # check the temperature convergence
+            # a single call to get_temperature_update is like taking an additional
+            # Newton iteration and gives us a residual
+            temp_resid = get_temperature_update_compiled(
+                cv, dv.temperature)/dv.temperature
+            temp_err_min = vol_min(temp_resid)
+            temp_err_max = vol_max(temp_resid)
+            dv_status_msg += (
+                f"\n-------- T_resid (min, max) = "
+                f"({temp_err_min:1.5e}, {temp_err_max:1.5e})")
+
         for i in range(nspecies):
             dv_status_msg += (
                 f"\n-------- y_{species_names[i]} (min, max) = "
@@ -941,9 +955,10 @@ def main(ctx_factory=cl.create_some_context,
             # Newton iteration and gives us a residual
             temp_resid = get_temperature_update_compiled(
                 cv, dv.temperature)/dv.temperature
-            temp_err = vol_min(temp_resid)
+            temp_err = vol_max(temp_resid)
             if temp_err > pyro_temp_tol:
                 health_error = True
+                #error = thaw(freeze(temp_err, actx), actx)
                 logger.info(f"Temperature is not converged {temp_resid=}.")
 
         return health_error
