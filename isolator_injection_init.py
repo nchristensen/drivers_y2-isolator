@@ -52,7 +52,6 @@ from mirgecom.mpi import mpi_entry_point
 import pyopencl.tools as cl_tools
 
 from mirgecom.fluid import make_conserved
-import cantera
 from mirgecom.eos import IdealSingleGas, PyrometheusMixture
 from mirgecom.transport import SimpleTransport
 from mirgecom.gas_model import GasModel, make_fluid_state
@@ -913,48 +912,44 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     inlet_area_ratio = inlet_height/throat_height
     outlet_area_ratio = outlet_height/throat_height
 
+    # make the eos
+    if nspecies < 3:
+        eos = IdealSingleGas(gamma=gamma, gas_const=r)
+    else:
+        from mirgecom.thermochemistry import get_pyrometheus_wrapper_class
+        from mirgecom.mechanisms.uiuc import Thermochemistry
+        pyro_mech = get_pyrometheus_wrapper_class(
+            pyro_class=Thermochemistry)(actx.np)
+        eos = PyrometheusMixture(pyro_mech, temperature_guess=init_temperature)
+        species_names = pyro_mech.species_names
+
+    gas_model = GasModel(eos=eos, transport=transport_model)
+
     # initialize eos and species mass fractions
     y = np.zeros(nspecies)
     y_fuel = np.zeros(nspecies)
     if nspecies == 2:
         y[0] = 1
         y_fuel[1] = 1
-        species_names = ["air", "fuel"]
     elif nspecies > 2:
-        from mirgecom.mechanisms import get_mechanism_cti
-        mech_cti = get_mechanism_cti("uiuc")
 
-        cantera_soln = cantera.Solution(phase_id="gas", source=mech_cti)
-        cantera_nspecies = cantera_soln.n_species
-        if nspecies != cantera_nspecies:
-            if rank == 0:
-                print(f"specified {nspecies=}, but cantera mechanism"
-                      f" needs nspecies={cantera_nspecies}")
-            raise RuntimeError()
+        # find name species indicies
+        for i in range(nspecies):
+            if species_names[i] == "C2H4":
+                i_c2h4 = i
+            if species_names[i] == "H2":
+                i_h2 = i
+            if species_names[i] == "O2":
+                i_ox = i
+            if species_names[i] == "N2":
+                i_di = i
 
-        i_c2h4 = cantera_soln.species_index("C2H4")
-        i_h2 = cantera_soln.species_index("H2")
-        i_ox = cantera_soln.species_index("O2")
-        i_di = cantera_soln.species_index("N2")
         # Set the species mass fractions to the free-stream flow
         y[i_ox] = mf_o2
         y[i_di] = 1. - mf_o2
         # Set the species mass fractions to the free-stream flow
         y_fuel[i_c2h4] = mf_c2h4
         y_fuel[i_h2] = mf_h2
-
-        cantera_soln.TPY = init_temperature, 101325, y
-
-    # make the eos
-    if nspecies < 3:
-        eos = IdealSingleGas(gamma=gamma, gas_const=r)
-    else:
-        from mirgecom.thermochemistry import make_pyrometheus_mechanism_class
-        pyro_mech = make_pyrometheus_mechanism_class(cantera_soln)(actx.np)
-        eos = PyrometheusMixture(pyro_mech, temperature_guess=init_temperature)
-        species_names = pyro_mech.species_names
-
-    gas_model = GasModel(eos=eos, transport=transport_model)
 
     inlet_mach = getMachFromAreaRatio(area_ratio=inlet_area_ratio,
                                       gamma=gamma,
@@ -969,9 +964,11 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
         rho_inflow = pres_inflow/temp_inflow/r
         sos = math.sqrt(gamma*pres_inflow/rho_inflow)
     else:
-        cantera_soln.TPY = temp_inflow, pres_inflow, y
-        rho_inflow = cantera_soln.density
-        gamma_loc = cantera_soln.cp_mass/cantera_soln.cv_mass
+        rho_inflow = pyro_mech.get_density(p=pres_inflow,
+                                          temperature=temp_inflow,
+                                          mass_fractions=y)
+        gamma_loc = (pyro_mech.get_mixture_specific_heat_cp_mass(temp_inflow, y) /
+                     pyro_mech.get_mixture_specific_heat_cv_mass(temp_inflow, y))
         sos = math.sqrt(gamma_loc*pres_inflow/rho_inflow)
 
     vel_inflow[0] = inlet_mach*sos
@@ -999,9 +996,11 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
         rho_outflow = pres_outflow/temp_outflow/r
         sos = math.sqrt(gamma*pres_outflow/rho_outflow)
     else:
-        cantera_soln.TPY = temp_outflow, pres_outflow, y
-        rho_outflow = cantera_soln.density
-        gamma_loc = cantera_soln.cp_mass/cantera_soln.cv_mass
+        rho_outflow = pyro_mech.get_density(p=pres_outflow,
+                                            temperature=temp_outflow,
+                                            mass_fractions=y)
+        gamma_loc = (pyro_mech.get_mixture_specific_heat_cp_mass(temp_outflow, y) /
+                     pyro_mech.get_mixture_specific_heat_cv_mass(temp_outflow, y))
         sos = math.sqrt(gamma_loc*pres_outflow/rho_outflow)
 
     vel_outflow[0] = outlet_mach*math.sqrt(gamma*pres_outflow/rho_outflow)
@@ -1031,12 +1030,14 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
         rho_injection = pres_injection/temp_injection/r
         sos = math.sqrt(gamma*pres_injection/rho_injection)
     else:
-        cantera_soln.TPY = temp_injection, pres_injection, y_fuel
-        rho_injection = cantera_soln.density
-        gamma_loc = cantera_soln.cp_mass/cantera_soln.cv_mass
+        rho_injection = pyro_mech.get_density(p=pres_injection,
+                                              temperature=temp_injection,
+                                              mass_fractions=y)
+        gamma_loc = (pyro_mech.get_mixture_specific_heat_cp_mass(temp_injection, y) /
+                     pyro_mech.get_mixture_specific_heat_cv_mass(temp_injection, y))
         sos = math.sqrt(gamma_loc*pres_injection/rho_injection)
         if rank == 0:
-            print(f"injection gamma guess {gamma_inj} cantera gamma {gamma_loc}")
+            print(f"injection gamma guess {gamma_inj} pyro gamma {gamma_loc}")
 
     vel_injection[0] = -mach_inj*sos
 
