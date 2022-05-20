@@ -931,8 +931,8 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
     if nspecies == 2:
         y[0] = 1
         y_fuel[1] = 1
+        species_names = ["air", "fuel"]
     elif nspecies > 2:
-
         # find name species indicies
         for i in range(nspecies):
             if species_names[i] == "C2H4":
