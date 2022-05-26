@@ -106,6 +106,7 @@ jobs:
 
         - name: Lazy parallel multi-species injection smoke test
           run: |
+            set -o pipefail
             source emirge/config/activate_env.sh
             cd smoke_test_injection_2d
             ln -sf run_params_scalar.yaml run_params.yaml
