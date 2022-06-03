@@ -1,7 +1,7 @@
 nviz: 100
 nrestart: 100
 nhealth: 1
-nstatus: 1
+nstatus: 100
 current_dt: 1.0e-10
 t_final: 2.e-9
 order:  1
