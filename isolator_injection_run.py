@@ -928,11 +928,9 @@ def main(ctx_factory=cl.create_some_context,
         cv = fluid_state.cv
         dv = fluid_state.dv
 
-        '''
         if check_naninf_local(discr, "vol", dv.pressure):
             health_error = True
             logger.info(f"{rank=}: NANs/Infs in pressure data.")
-            '''
 
         if global_range_check(dv.pressure, health_pres_min, health_pres_max):
             health_error = True
@@ -942,29 +940,6 @@ def main(ctx_factory=cl.create_some_context,
                         f"Simulation Range ({p_min=}, {p_max=}) "
                         f"Specified Limits ({health_pres_min=}, {health_pres_max=})")
 
-        if global_range_check(dv.pressure, health_pres_min, health_pres_max):
-            health_error = True
-
-        if global_range_check(dv.pressure, health_pres_min, health_pres_max):
-            health_error = True
-
-        if global_range_check(dv.pressure, health_pres_min, health_pres_max):
-            health_error = True
-
-        if global_range_check(dv.pressure, health_pres_min, health_pres_max):
-            health_error = True
-
-        if global_range_check(dv.pressure, health_pres_min, health_pres_max):
-            health_error = True
-
-        if global_range_check(dv.pressure, health_pres_min, health_pres_max):
-            health_error = True
-
-        if global_range_check(dv.pressure, health_pres_min, health_pres_max):
-            health_error = True
-
-
-        '''
         if global_range_check(dv.temperature, health_temp_min, health_temp_max):
             health_error = True
             t_min = vol_min(dv.temperature)
@@ -972,9 +947,7 @@ def main(ctx_factory=cl.create_some_context,
             logger.info(f"Temperature range violation: "
                         f"Simulation Range ({t_min=}, {t_max=}) "
                         f"Specified Limits ({health_temp_min=}, {health_temp_max=})")
-                        '''
 
-        '''
         for i in range(nspecies):
             if global_range_check(cv.species_mass_fractions[i],
                                   health_mass_frac_min, health_mass_frac_max):
@@ -983,7 +956,6 @@ def main(ctx_factory=cl.create_some_context,
                 y_max = vol_max(cv.species_mass_fractions[i])
                 logger.info(f"Species mass fraction range violation. "
                             f"{species_names[i]}: ({y_min=}, {y_max=})")
-                            '''
 
         #if nspecies > 2:
         if 0:

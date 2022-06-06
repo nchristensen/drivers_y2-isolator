@@ -917,7 +917,7 @@ def main(ctx_factory=cl.create_some_context, user_input_file=None,
         eos = IdealSingleGas(gamma=gamma, gas_const=r)
     else:
         from mirgecom.thermochemistry import get_pyrometheus_wrapper_class
-        from mirgecom.mechanisms.uiuc import Thermochemistry
+        from uiuc import Thermochemistry
         pyro_mech = get_pyrometheus_wrapper_class(
             pyro_class=Thermochemistry)(actx.np)
         eos = PyrometheusMixture(pyro_mech, temperature_guess=init_temperature)
