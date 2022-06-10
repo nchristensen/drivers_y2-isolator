@@ -54,7 +54,8 @@ from mirgecom.simutil import (
     write_visfile,
     check_naninf_local,
     check_range_local,
-    get_sim_timestep
+    get_sim_timestep,
+    force_evaluation
 )
 from mirgecom.restart import write_restart_file
 from mirgecom.io import make_init_message
@@ -62,6 +63,7 @@ from mirgecom.mpi import mpi_entry_point
 import pyopencl.tools as cl_tools
 from mirgecom.integrators import (rk4_step, lsrk54_step, lsrk144_step,
                                   euler_step)
+from grudge.shortcuts import compiled_lsrk45_step
 
 from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
@@ -307,6 +309,7 @@ def main(ctx_factory=cl.create_some_context,
     current_step = 0
     current_cfl = 1.0
     constant_cfl = False
+    force_eval = True
 
     # default health status bounds
     health_pres_min = 1.0e-1
@@ -473,10 +476,14 @@ def main(ctx_factory=cl.create_some_context,
             pass
 
     # param sanity check
-    allowed_integrators = ["rk4", "euler", "lsrk54", "lsrk144"]
+    allowed_integrators = ["rk4", "euler", "lsrk54", "lsrk144", "compiled_lsrk54"]
     if integrator not in allowed_integrators:
         error_message = "Invalid time integrator: {}".format(integrator)
         raise RuntimeError(error_message)
+
+    if integrator == "compiled_lsrk54":
+        print("Setting force_eval = False for pre-compiled time integration")
+        force_eval = False
 
     s0_sc = np.log10(1.0e-4 / np.power(order, 4))
     if rank == 0:
@@ -505,6 +512,9 @@ def main(ctx_factory=cl.create_some_context,
         print(f"ignition duration {spark_duration}")
         print("#### Ignition control parameters ####\n")
 
+    def _compiled_stepper_wrapper(state, t, dt, rhs):
+        return compiled_lsrk45_step(actx, state, t, dt, rhs)
+
     timestepper = rk4_step
     if integrator == "euler":
         timestepper = euler_step
@@ -512,6 +522,8 @@ def main(ctx_factory=cl.create_some_context,
         timestepper = lsrk54_step
     if integrator == "lsrk144":
         timestepper = lsrk144_step
+    if integrator == "compiled_lsrk54":
+        timestepper = _compiled_stepper_wrapper
 
     # }}}
     # working gas: O2/N2 #
@@ -1063,22 +1075,26 @@ def main(ctx_factory=cl.create_some_context,
     sc_scale = get_sc_scale_compiled()
 
     def my_pre_step(step, t, dt, state):
-        cv, tseed = state
-        fluid_state = create_fluid_state(cv=cv, temperature_seed=tseed)
-        fluid_state = thaw(freeze(fluid_state, actx), actx)
-        dv = fluid_state.dv
 
         try:
             if logmgr:
                 logmgr.tick_before()
 
-            alpha_field = my_get_alpha(fluid_state, alpha_sc)
-            ts_field, cfl, dt = my_get_timestep(t, dt, fluid_state, alpha_field)
-
             do_viz = check_step(step=step, interval=nviz)
             do_restart = check_step(step=step, interval=nrestart)
             do_health = check_step(step=step, interval=nhealth)
             do_status = check_step(step=step, interval=nstatus)
+
+            if any([do_viz, do_restart, do_health, do_status]):
+                cv, tseed = state
+                fluid_state = create_fluid_state(cv=cv, temperature_seed=tseed)
+                # if the time integrator didn't force_eval, do so now
+                if not force_eval:
+                    fluid_state = force_evaluation(actx, fluid_state)
+                dv = fluid_state.dv
+
+                alpha_field = my_get_alpha(fluid_state, alpha_sc)
+                ts_field, cfl, dt = my_get_timestep(t, dt, fluid_state, alpha_field)
 
             if do_health:
                 health_errors = global_reduce(my_health_check(fluid_state), op="lor")
@@ -1174,6 +1190,7 @@ def main(ctx_factory=cl.create_some_context,
                       post_step_callback=my_post_step,
                       istep=current_step, dt=current_dt,
                       t=current_t, t_final=t_final,
+                      force_eval=force_eval,
                       state=make_obj_array([current_state.cv, temperature_seed]))
     current_cv, tseed = stepper_state
     current_state = create_fluid_state(current_cv, tseed)
