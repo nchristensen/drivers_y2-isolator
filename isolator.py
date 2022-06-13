@@ -756,9 +756,11 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
 
     # main array context for the simulation
     if lazy:
-        actx = actx_class(comm, queue,
-            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
-            mpi_base_tag=12000)
+        mpi_base_tag=12000
+        import inspect
+        print(inspect.getsource(actx_class.__init__))
+        actx = actx_class(comm, queue, mpi_base_tag,
+            allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
     else:
         actx = actx_class(comm, queue,
                 allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
@@ -1521,8 +1523,8 @@ if __name__ == "__main__":
     if args.profile:
         if lazy:
             raise ValueError("Can't use lazy and profiling together.")
-    if lazy and args.autotune:
-        raise ValueError("Can't use lazy with autotuning yet")
+    #if lazy and args.autotune:
+    #    raise ValueError("Can't use lazy with autotuning yet")
 
     from grudge.array_context import get_reasonable_array_context_class
 
@@ -1534,7 +1536,13 @@ if __name__ == "__main__":
         #from grudge.grudge_array_context import KernelSavingArrayContext as actx_class
         #from grudge.grudge_array_context import KernelSavingAutotuningArrayContext as actx_class
         #from mirgecom.array_context import MirgecomAutotuningArrayContext as actx_class
+        #from mirgecom.array_context import MPIKernelSavingFusionContractorArrayContext as actx_class
+        #from grudge.array_context import MPIFusionContractorArrayContext as actx_class
+        #from grudge.grudge_array_context import COrderedKernelSavingArrayContext as actx_class
+        #from grudge.grudge_array_context import COrderedGrudgeArrayContext as actx_class
+        #from grudge.grudge_array_context import COrderedAutotuningArrayContext as actx_class
         from mirgecom.array_context import MirgecomKernelSavingAutotuningArrayContext as actx_class
+        #from mirgecom.array_context import COrderedMirgecomKernelSavingAutotuningArrayContext as actx_class
 
     restart_filename = None
     if args.restart_file:
