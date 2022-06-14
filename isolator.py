@@ -1546,8 +1546,8 @@ if __name__ == "__main__":
         #from grudge.grudge_array_context import COrderedKernelSavingArrayContext as actx_class
         #from grudge.grudge_array_context import COrderedGrudgeArrayContext as actx_class
         #from grudge.grudge_array_context import COrderedAutotuningArrayContext as actx_class
-        #from mirgecom.array_context import MirgecomKernelSavingAutotuningArrayContext as actx_class
-        from mirgecom.array_context import COrderedMirgecomKernelSavingAutotuningArrayContext as actx_class
+        from mirgecom.array_context import MirgecomKernelSavingAutotuningArrayContext as actx_class
+        #from mirgecom.array_context import COrderedMirgecomKernelSavingAutotuningArrayContext as actx_class
 
     restart_filename = None
     if args.restart_file:
