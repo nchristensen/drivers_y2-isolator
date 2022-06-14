@@ -718,7 +718,12 @@ def main(ctx_factory=cl.create_some_context, restart_filename=None,
     logger.addHandler(h2)
 
     """Drive the Y0 example."""
-    cl_ctx = cl.Context(dev_type=cl.device_type.GPU)
+    #cl_ctx = cl.Context(dev_type=cl.device_type.GPU)
+
+    platforms = cl.get_platforms()
+    cl_ctx = cl.Context(
+        dev_type=cl.device_type.GPU,
+        properties=[(cl.context_properties.PLATFORM, platforms[0])])
     #cl_ctx = ctx_factory()
 
     from mpi4py import MPI
@@ -1541,8 +1546,8 @@ if __name__ == "__main__":
         #from grudge.grudge_array_context import COrderedKernelSavingArrayContext as actx_class
         #from grudge.grudge_array_context import COrderedGrudgeArrayContext as actx_class
         #from grudge.grudge_array_context import COrderedAutotuningArrayContext as actx_class
-        from mirgecom.array_context import MirgecomKernelSavingAutotuningArrayContext as actx_class
-        #from mirgecom.array_context import COrderedMirgecomKernelSavingAutotuningArrayContext as actx_class
+        #from mirgecom.array_context import MirgecomKernelSavingAutotuningArrayContext as actx_class
+        from mirgecom.array_context import COrderedMirgecomKernelSavingAutotuningArrayContext as actx_class
 
     restart_filename = None
     if args.restart_file:
