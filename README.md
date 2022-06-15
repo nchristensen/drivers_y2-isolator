@@ -85,7 +85,7 @@ cd emirge
 ./install.sh --fork=nchristensen --branch=production --conda-prefix=PATHTOCONDA
 ```
 
-Install charm4py
+Optional: Install charm4py if using charm4py autotuning script
 
 ```
 conda activate ceesd #Or the name the the environment you chose
@@ -139,7 +139,7 @@ The pickled kernels are saved in the `pickled_kernels` directory by default.
 Execute the autotuning script
 ```
 #TODO: Fix grudge install so don't need path to grudge 
-jsrun -n 16 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_v2.py
+jsrun -n 16 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_mpi4py.py
 ```
 
 The script will use n-1 GPUs to execute autotuning on each of the pickled kernels and save hjson
