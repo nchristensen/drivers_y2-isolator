@@ -30,11 +30,24 @@ Else
     injector_factor=10.0;
 EndIf
 
+If(Exists(shearfac))
+    shear_factor=shearfac;
+Else
+    shear_factor=1.0;
+EndIf
+
+If(Exists(cavityfac))
+    cavity_factor=cavityfac;
+Else
+    cavity_factor=1.0;
+EndIf
+
 bigsize = basesize*4;     // the biggest mesh size 
 inletsize = basesize*2;   // background mesh size upstream of the nozzle
 isosize = basesize;       // background mesh size in the isolator
 nozzlesize = basesize/2;       // background mesh size in the isolator
-cavitysize = basesize/2.; // background mesh size in the cavity region
+cavitysize = basesize/cavity_factor; // background mesh size in the cavity region
+shearsize = cavitysize/shear_factor;
 
 inj_h=4.e-3;  // height of injector (bottom) from floor
 inj_t=1.59e-3; // diameter of injector
@@ -749,10 +762,28 @@ Field[7].Thickness = 0.10;    // interpolate from VIn to Vout over a distance ar
 Field[7].VIn = injectorsize;
 Field[7].VOut = bigsize;
 
+// background mesh size in the shear region
+shear_start_x = 0.65;
+shear_end_x = 0.73;
+shear_start_y = -0.004;
+shear_end_y = -0.01;
+shear_start_z = -1.0;
+shear_end_z = 1.0;
+Field[8] = Box;
+Field[8].XMin = shear_start_x;
+Field[8].XMax = shear_end_x;
+Field[8].YMin = shear_start_y;
+Field[8].YMax = shear_end_y;
+Field[8].ZMin = shear_start_z;
+Field[8].ZMax = shear_end_z;
+Field[8].Thickness = 0.10;  
+Field[8].VIn = shearsize;
+Field[8].VOut = bigsize;
+
 // take the minimum of all defined meshing fields
 Field[100] = Min;
 //Field[100].FieldsList = {2, 3, 4, 5, 6, 7, 12, 14};
-Field[100].FieldsList = {2, 3, 4, 5, 6, 7, 12, 14};
+Field[100].FieldsList = {2, 3, 4, 5, 6, 7, 8, 12, 14};
 //Field[100].FieldsList = {2};
 Background Field = 100;
 
