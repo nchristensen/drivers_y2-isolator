@@ -59,6 +59,7 @@ Printf("inletsize = %f", inletsize);
 Printf("isosize = %f", isosize);
 Printf("nozzlesize = %f", nozzlesize);
 Printf("cavitysize = %f", cavitysize);
+Printf("shearsize = %f", shearsize);
 Printf("injectorsize = %f", injectorsize);
 Printf("boundratio = %f", boundratio);
 Printf("boundratiocavity = %f", boundratiocavity);

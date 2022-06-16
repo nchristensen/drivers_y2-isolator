@@ -43,7 +43,9 @@ from logpyle import IntervalTimer, set_dt
 from mirgecom.logging_quantities import (
     initialize_logmgr,
     logmgr_add_cl_device_info,
-    logmgr_set_time
+    logmgr_set_time,
+    logmgr_add_device_name,
+    logmgr_add_device_memory_usage,
 )
 
 from mirgecom.navierstokes import ns_operator
@@ -658,6 +660,8 @@ def main(ctx_factory=cl.create_some_context,
 
     if logmgr:
         logmgr_add_cl_device_info(logmgr, queue)
+        logmgr_add_device_name(logmgr, queue)
+        logmgr_add_device_memory_usage(logmgr, queue)
 
         logmgr.add_watches([
             ("step.max", "step = {value}, "),
@@ -667,7 +671,12 @@ def main(ctx_factory=cl.create_some_context,
         ])
 
         try:
-            logmgr.add_watches(["memory_usage.max"])
+            logmgr.add_watches(["memory_usage_python.max"])
+        except KeyError:
+            pass
+
+        try:
+            logmgr.add_watches(["memory_usage_gpu.max"])
         except KeyError:
             pass
 
