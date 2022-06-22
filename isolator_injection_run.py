@@ -342,6 +342,8 @@ def main(ctx_factory=cl.create_some_context,
     use_av = True
     use_combustion = True
 
+    sponge_sigma = 1.0
+
     # initialize the ignition spark
     spark_center = np.zeros(shape=(dim,))
     spark_center[0] = 0.677
@@ -466,6 +468,10 @@ def main(ctx_factory=cl.create_some_context,
             pass
         try:
             use_sponge = bool(input_data["use_sponge"])
+        except KeyError:
+            pass
+        try:
+            sponge_sigma = float(input_data["sponge_sigma"])
         except KeyError:
             pass
         try:
@@ -671,7 +677,9 @@ def main(ctx_factory=cl.create_some_context,
         ])
 
         try:
-            logmgr.add_watches(["memory_usage_python.max"])
+            #logmgr.add_watches(["memory_usage_python.max"])
+            logmgr.add_watches(["memory_usage_python.max",
+                                "memory: {value:6g} MByte"])
         except KeyError:
             pass
 
@@ -775,7 +783,7 @@ def main(ctx_factory=cl.create_some_context,
 
     # initialize the sponge field
     sponge_thickness = 0.09
-    sponge_amp = 1.0/current_dt/1000
+    sponge_amp = sponge_sigma/current_dt/1000
     sponge_x0 = 0.9
 
     sponge_init = InitSponge(x0=sponge_x0, thickness=sponge_thickness,
@@ -835,6 +843,9 @@ def main(ctx_factory=cl.create_some_context,
                                      eosname=eosname, casename=casename)
     if rank == 0:
         logger.info(init_message)
+
+    from grudge.dt_utils import characteristic_lengthscales
+    length_scales = characteristic_lengthscales(actx, discr)
 
     # some utility functions
     def vol_min_loc(x):
@@ -899,7 +910,11 @@ def main(ctx_factory=cl.create_some_context,
         if rank == 0:
             logger.info(status_msg)
 
-    def my_write_viz(step, t, cv, dv, ts_field, alpha_field):
+    def my_write_viz(step, t, fluid_state, ts_field, alpha_field):
+
+        cv = fluid_state.cv
+        dv = fluid_state.dv
+
         tagged_cells = smoothness_indicator(discr, cv.mass, s0=s0_sc,
                                             kappa=kappa_sc)
 
@@ -909,6 +924,7 @@ def main(ctx_factory=cl.create_some_context,
         viz_fields = [("cv", cv),
                       ("dv", dv),
                       ("mach", mach),
+                      ("rank", rank),
                       ("velocity", cv.velocity),
                       ("sponge_sigma", sponge_sigma),
                       ("alpha", alpha_field),
@@ -923,6 +939,22 @@ def main(ctx_factory=cl.create_some_context,
             temp_resid = get_temperature_update_compiled(
                 cv, dv.temperature)/dv.temperature
             viz_ext = [("temp_resid", temp_resid)]
+            viz_fields.extend(viz_ext)
+
+        # additional viz quantities, add in some non-dimensional numbers
+        if 1:
+            cell_Re = cv.mass*cv.speed*length_scales/fluid_state.viscosity
+            cp = gas_model.eos.heat_capacity_cp(cv, fluid_state.temperature)
+            alpha_heat = fluid_state.thermal_conductivity/cp/fluid_state.viscosity
+            cell_Pe_heat = length_scales*cv.speed/alpha_heat
+            from mirgecom.viscous import get_local_max_species_diffusivity
+            d_alpha_max = \
+                get_local_max_species_diffusivity(fluid_state.array_context,
+                                                  fluid_state.species_diffusivity)
+            cell_Pe_mass = length_scales*cv.speed/d_alpha_max
+            viz_ext = [("Re", cell_Re),
+                       ("Pe_mass", cell_Pe_mass),
+                       ("Pe_heat", cell_Pe_heat)]
             viz_fields.extend(viz_ext)
 
         write_visfile(discr, viz_fields, visualizer, vizname=vizname,
@@ -978,8 +1010,7 @@ def main(ctx_factory=cl.create_some_context,
                 logger.info(f"Species mass fraction range violation. "
                             f"{species_names[i]}: ({y_min=}, {y_max=})")
 
-        #if nspecies > 2:
-        if 0:
+        if nspecies > 2:
             # check the temperature convergence
             # a single call to get_temperature_update is like taking an additional
             # Newton iteration and gives us a residual
@@ -1011,9 +1042,6 @@ def main(ctx_factory=cl.create_some_context,
         :class:`~meshmode.dof_array.DOFArray`
             The maximum stable timestep at each node.
         """
-        from grudge.dt_utils import characteristic_lengthscales
-
-        length_scales = characteristic_lengthscales(state.array_context, discr)
 
         nu = 0
         d_alpha_max = 0
@@ -1069,9 +1097,6 @@ def main(ctx_factory=cl.create_some_context,
 
         return ts_field, cfl, min(t_remaining, dt)
 
-    from grudge.dt_utils import characteristic_lengthscales
-    length_scales = characteristic_lengthscales(actx, discr)
-
     def my_get_alpha(state, alpha):
         """Scale alpha by the element characteristic length and velocity"""
         return alpha*state.speed*length_scales
@@ -1119,13 +1144,13 @@ def main(ctx_factory=cl.create_some_context,
                 my_write_restart(step=step, t=t, cv=cv, temperature_seed=tseed)
 
             if do_viz:
-                my_write_viz(step=step, t=t, cv=cv, dv=dv,
+                my_write_viz(step=step, t=t, fluid_state=fluid_state,
                              ts_field=ts_field, alpha_field=alpha_field)
 
         except MyRuntimeError:
             if rank == 0:
                 logger.error("Errors detected; attempting graceful exit.")
-            my_write_viz(step=step, t=t, cv=cv, dv=dv, ts_field=ts_field,
+            my_write_viz(step=step, t=t, fluid_state=fluid_state, ts_field=ts_field,
                          alpha_field=alpha_field)
             my_write_restart(step=step, t=t, cv=cv, temperature_seed=tseed)
             raise
@@ -1213,7 +1238,7 @@ def main(ctx_factory=cl.create_some_context,
                                         state=current_state, alpha=alpha_field)
     my_write_status(dt=dt, cfl=cfl, cv=current_state.cv, dv=final_dv)
 
-    my_write_viz(step=current_step, t=current_t, cv=current_state.cv, dv=final_dv,
+    my_write_viz(step=current_step, t=current_t, fluid_state=current_state,
                  ts_field=ts_field, alpha_field=alpha_field)
     my_write_restart(step=current_step, t=current_t, cv=current_state.cv,
                      temperature_seed=tseed)
