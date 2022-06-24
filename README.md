@@ -85,10 +85,16 @@ cd emirge
 ./install.sh --fork=nchristensen --branch=production --conda-prefix=PATHTOCONDA
 ```
 
-Optional: Install charm4py if using charm4py autotuning script
+Install charm4py if using charm4py autotuning script (currently needed for Lassen)
 
 ```
+# Setup environment
+module load spectrum-mpi
+module load gcc/8
+export CHARM_EXTRA_BUILD_OPTS="mpicxx"
 conda activate ceesd #Or the name the the environment you chose
+
+# Install charm4py
 pip install cython
 pip install greenlet
 git clone git@github.com:UIUC-PPL/charm4py.git
@@ -98,11 +104,11 @@ cd charm_src
 git clone git@github.com:UIUC-PPL/charm.git
 cd ..
 pip install --install-option="--mpi" .
-```
 
-On some machines setup will build charm++ but may not move it to the appropriate directory.
-If so, you may need to move it and then re-run `pip install .` Ignore this if charm4py
-builds correctly.
+# Test charm4py 
+bsub -nnodes 1 -Ip -XF -W 30 /bin/bash
+srun -n 4 python -m mpi4py <path to charm4py>/examples/hello/array_hello.py
+```
 
 Change to preferred directory and clone y2-isolator with autotuning driver.
 ```
@@ -139,7 +145,7 @@ The pickled kernels are saved in the `pickled_kernels` directory by default.
 Execute the autotuning script
 ```
 #TODO: Fix grudge install so don't need path to grudge 
-jsrun -n 16 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_mpi4py.py
+jsrun -n 16 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_charm4py.py
 ```
 
 The script will use n-1 GPUs to execute autotuning on each of the pickled kernels and save hjson
@@ -158,8 +164,3 @@ require re-running the autotuner. To minimize the autotuning time, run the drive
 ### Known issues
 Pocl CUDA kernel execution times often have only a few digits of accuracy which may mean a suboptimal set of
 transformations is selected.
-
-The autotuning process seems to generate occasional errors when the number of GPUs is large. 
-32 GPUs seems to work reasonably well but some monitoring may be required currently.
-
-
