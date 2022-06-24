@@ -95,8 +95,7 @@ export CHARM_EXTRA_BUILD_OPTS="mpicxx"
 conda activate ceesd #Or the name the the environment you chose
 
 # Install charm4py
-pip install cython
-pip install greenlet
+pip install cython greenlet
 git clone git@github.com:UIUC-PPL/charm4py.git
 cd charm4py
 mkdir charm_src
@@ -108,6 +107,7 @@ pip install --install-option="--mpi" .
 # Test charm4py 
 bsub -nnodes 1 -Ip -XF -W 30 /bin/bash
 srun -n 4 python -m mpi4py <path to charm4py>/examples/hello/array_hello.py
+exit
 ```
 
 Change to preferred directory and clone y2-isolator with autotuning driver.
