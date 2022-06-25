@@ -126,7 +126,7 @@ bsub -nnodes 4 -Ip -XF -W 240 /bin/bash
 
 ```
 conda activate ceesd
-cd drivers_y2-isolator/test_mesh/eager/eigthX/data
+cd drivers_y2-isolator/test_mesh/eager/quarterX/data
 ./make_mesh.sh
 cd ..
 ```
