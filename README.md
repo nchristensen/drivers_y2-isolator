@@ -148,6 +148,8 @@ Execute the autotuning script
 jsrun -n 16 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_charm4py.py
 ```
 
+This script may occasionally fails with a CUDA error. Try running the script again if this occurs.
+
 The script will use n-1 GPUs to execute autotuning on each of the pickled kernels and save hjson
 transformation files in the `hjson` directory. With the hjson files created, run the driver again. It should now load the transformations from the hjson files
 and execute much faster.
