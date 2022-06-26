@@ -168,3 +168,7 @@ require re-running the autotuner. To minimize the autotuning time, run the drive
 ### Known issues
 Pocl CUDA kernel execution times often have only a few digits of accuracy which may mean a suboptimal set of
 transformations is selected.
+
+The Charm4py autotuning script probably has a memory leak to do repeatedly creating queues (though not creating the queues causes other problems). It may eventually run out of memory and crash and need to be restarted.
+
+The mpi4py autotuning script is exceedingly slow on Lassen, possibly due to Spectrum MPI.
