@@ -139,7 +139,7 @@ Edit `run_params.yaml` to execute a single time step and then run the the driver
 # Execute the driver on two nodes
 # Export OPENCL_VENDOR_PATH if necessary.
 #export OPENCL_VENDOR_PATH="$HOME/miniforge3/envs/ceesd/etc/OpenCL/vendors"
-jsrun -n 2 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
+jsrun -n 1 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
 ```
 
 The pickled kernels are saved in the `pickled_kernels` directory by default.
@@ -155,7 +155,7 @@ transformation files in the `hjson` directory. With the hjson files created, run
 and execute much faster (provided the mesh is sufficiently large and the polynomial order sufficiently high).
 
 ```
-jsrun -n 2 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
+jsrun -n 1 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
 ```
 
 ### Notes
