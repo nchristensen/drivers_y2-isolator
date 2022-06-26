@@ -126,6 +126,8 @@ bsub -nnodes 4 -Ip -XF -W 240 /bin/bash
 
 ```
 conda activate ceesd
+module load gcc/8
+module load spectrum-mpi
 cd drivers_y2-isolator/test_mesh/eager/quarterX/data
 ./make_mesh.sh
 cd ..
