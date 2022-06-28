@@ -121,7 +121,7 @@ We'll interactively for this example.
 
 Request some nodes.
 ```
-bsub -nnodes 4 -Ip -XF -W 240 /bin/bash
+bsub -nnodes 2 -Ip -XF -W 240 /bin/bash
 ```
 
 ```
@@ -147,7 +147,7 @@ The pickled kernels are saved in the `pickled_kernels` directory by default.
 Execute the autotuning script
 ```
 #TODO: Fix grudge install so don't need path to grudge 
-jsrun -n 16 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_charm4py.py
+jsrun -n 8 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels/parallel_autotuning_charm4py.py
 ```
 
 The script will use n-1 GPUs to execute autotuning on each of the pickled kernels and save hjson
@@ -166,6 +166,8 @@ require re-running the autotuner. To minimize the autotuning time, run the drive
 ### Known issues
 Pocl CUDA kernel execution times often have only a few digits of accuracy which may mean a suboptimal set of
 transformations is selected.
+
+Cached kernels in $HOME/.cache may eventually use all available space and cause the autotuner to crash.
 
 The Charm4py autotuning script probably has a memory leak to do repeatedly creating queues (though not creating the queues causes other problems). It may eventually run out of memory and crash and need to be restarted.
 
