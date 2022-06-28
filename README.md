@@ -126,7 +126,9 @@ bsub -nnodes 4 -Ip -XF -W 240 /bin/bash
 
 ```
 conda activate ceesd
-cd drivers_y2-isolator/test_mesh/eager/eigthX/data
+module load gcc/8
+module load spectrum-mpi
+cd drivers_y2-isolator/test_mesh/eager/quarterX/data
 ./make_mesh.sh
 cd ..
 ```
@@ -137,7 +139,7 @@ Edit `run_params.yaml` to execute a single time step and then run the the driver
 # Execute the driver on two nodes
 # Export OPENCL_VENDOR_PATH if necessary.
 #export OPENCL_VENDOR_PATH="$HOME/miniforge3/envs/ceesd/etc/OpenCL/vendors"
-jsrun -n 2 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
+jsrun -n 1 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
 ```
 
 The pickled kernels are saved in the `pickled_kernels` directory by default.
@@ -150,10 +152,10 @@ jsrun -n 16 -a 1 -g 1 python -O -m mpi4py PATH_TO_GRUDGE/grudge/loopy_dg_kernels
 
 The script will use n-1 GPUs to execute autotuning on each of the pickled kernels and save hjson
 transformation files in the `hjson` directory. With the hjson files created, run the driver again. It should now load the transformations from the hjson files
-and execute much faster.
+and execute much faster (provided the mesh is sufficiently large and the polynomial order sufficiently high).
 
 ```
-jsrun -n 2 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
+jsrun -n 1 -a 1 -g 1 python -O -m mpi4py isolator.py -i run_params.yaml --autotune
 ```
 
 ### Notes
@@ -164,3 +166,7 @@ require re-running the autotuner. To minimize the autotuning time, run the drive
 ### Known issues
 Pocl CUDA kernel execution times often have only a few digits of accuracy which may mean a suboptimal set of
 transformations is selected.
+
+The Charm4py autotuning script probably has a memory leak to do repeatedly creating queues (though not creating the queues causes other problems). It may eventually run out of memory and crash and need to be restarted.
+
+The mpi4py autotuning script is exceedingly slow on Lassen, possibly due to Spectrum MPI.

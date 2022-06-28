@@ -4,7 +4,7 @@ nhealth: 1
 nstatus: 1
 current_dt: 1.0e-12
 t_final: 1.0e-12
-order:  2
+order:  3
 dimen: 3
 alpha_sc: 0.01
 s0_sc: -5.0
