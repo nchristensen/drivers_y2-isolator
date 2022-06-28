@@ -38,6 +38,7 @@ jobs:
             [[ $(uname) == Darwin ]] && brew update && brew install mpich
             ./buildMirge.sh
             cd emirge
+            source config/activate_env.sh
             ./version.sh
 
         - name: Run pylint
@@ -54,7 +55,8 @@ jobs:
           run: |
             source emirge/config/activate_env.sh
             cd smoke_test
-            ./run.sh
+            ./run.sh | tee mirge-1.out
+            ./getTiming.sh
 
         - name: Eager smoke restart test
           run: |
@@ -65,42 +67,68 @@ jobs:
         - name: Lazy smoke test
           run: |
             source emirge/config/activate_env.sh
-            cd smoke_test_lazy
-            ./run.sh
+            cd smoke_test
+            ./run_lazy.sh | tee mirge-1.out
+            ./getTiming.sh
+
+        - name: Lazy parallel distributed smoke test
+          run: |
+            source emirge/config/activate_env.sh
+            cd smoke_test
+            ./run_lazy.sh | tee mirge-1.out
+            ./getTiming.sh
 
         - name: Eager multi-species injection smoke test
           run: |
             source emirge/config/activate_env.sh
             cd smoke_test_injection_2d
-            ln -sf run_params_no_scalar.yaml run_params.yaml
-            ./run_init.sh
-            ./run.sh
             ln -sf run_params_scalar.yaml run_params.yaml
             ./run_init.sh
-            ./run.sh
+            ./run.sh | tee mirge-1.out
+            ./getTiming.sh
             ln -sf run_params_multi.yaml run_params.yaml
             ./run_init.sh
-            ./run.sh
+            ./run.sh | tee mirge-1.out
+            ./getTiming.sh
 
         - name: Lazy multi-species injection smoke test
           run: |
             source emirge/config/activate_env.sh
             cd smoke_test_injection_2d
-            ln -sf run_params_no_scalar.yaml run_params.yaml
-            ./run_init.sh
-            ./run.sh
             ln -sf run_params_scalar.yaml run_params.yaml
-            ./run_init.sh
-            ./run.sh
+            ./run_init_lazy.sh
+            ./run_lazy.sh | tee mirge-1.out
+            ./getTiming.sh
             ln -sf run_params_multi.yaml run_params.yaml
-            ./run_init.sh
-            ./run.sh
+            ./run_init_lazy.sh
+            ./run_lazy.sh | tee mirge-1.out
+            ./getTiming.sh
+
+        - name: Lazy parallel multi-species injection smoke test
+          run: |
+            set -o pipefail
+            source emirge/config/activate_env.sh
+            cd smoke_test_injection_2d
+            ln -sf run_params_scalar.yaml run_params.yaml
+            ./run_init_lazy_parallel.sh
+            ./run_lazy_parallel.sh | tee mirge-1.out
+            ./getTiming.sh
+            ln -sf run_params_multi.yaml run_params.yaml
+            ./run_init_lazy_parallel.sh
+            ./run_lazy_parallel.sh | tee mirge-1.out
+            ./getTiming.sh
 
         - name: 3D injection smoke test
           run: |
             source emirge/config/activate_env.sh
             cd smoke_test_injection_3d
-            ./run_init.sh
-            ./run.sh
+            ln -sf run_params_scalar.yaml run_params.yaml
+            ./run_init_lazy.sh
+            ./run_lazy.sh
+            ./getTiming.sh
+            ln -sf run_params_multi.yaml run_params.yaml
+            ./run_init_lazy.sh
+            ./run_lazy.sh
+            ./getTiming.sh
 
 

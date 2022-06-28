@@ -1,9 +1,4 @@
-"""mirgecom driver for the Y0 demonstration.
-
-Note: this example requires a *scaled* version of the Y0
-grid. A working grid example is located here:
-github.com:/illinois-ceesd/data@y0scaled
-"""
+"""Simulation driver for the Y2 Isolator case."""
 
 __copyright__ = """
 Copyright (C) 2020 University of Illinois Board of Trustees
@@ -49,7 +44,8 @@ from mirgecom.logging_quantities import (
     initialize_logmgr,
     logmgr_add_cl_device_info,
     logmgr_set_time,
-    set_sim_state
+    logmgr_add_device_name,
+    logmgr_add_device_memory_usage,
 )
 
 from mirgecom.navierstokes import ns_operator
@@ -60,7 +56,8 @@ from mirgecom.simutil import (
     write_visfile,
     check_naninf_local,
     check_range_local,
-    get_sim_timestep
+    get_sim_timestep,
+    force_evaluation
 )
 from mirgecom.restart import write_restart_file
 from mirgecom.io import make_init_message
@@ -68,6 +65,7 @@ from mirgecom.mpi import mpi_entry_point
 import pyopencl.tools as cl_tools
 from mirgecom.integrators import (rk4_step, lsrk54_step, lsrk144_step,
                                   euler_step)
+from grudge.shortcuts import compiled_lsrk45_step
 
 from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
@@ -81,11 +79,14 @@ from mirgecom.fluid import make_conserved
 
 
 class SingleLevelFilter(logging.Filter):
+    """Filter I/O."""
     def __init__(self, passlevel, reject):
+        """Initialize the I/O filter."""
         self.passlevel = passlevel
         self.reject = reject
 
     def filter(self, record):
+        """Filter it."""
         if self.reject:
             return (record.levelno != self.passlevel)
         else:
@@ -98,70 +99,10 @@ class MyRuntimeError(RuntimeError):
     pass
 
 
-#from pyro_mechs.uiuc import Thermochemistry
-from uiuc import Thermochemistry
-
-
-class PyroWrapper(Thermochemistry):
-
-    # This bit disallows negative concentrations and instead
-    # pins them to 0. mass_fractions can sometimes be slightly
-    # negative and that's ok.
-    def get_concentrations(self, rho, mass_fractions):
-        concs = self.iwts * rho * mass_fractions
-        # ensure non-negative concentrations
-        zero = self._pyro_zeros_like(concs[0])
-        for i in range(self.num_species):
-            concs[i] = self.usr_np.where(self.usr_np.less(concs[i], 0),
-                                         zero, concs[i])
-        return concs
-
-    # This is the temperature update for *get_temperature*.  Having this
-    # separated out allows it to be used in the fluid drivers for evaluating
-    # convergence of the temperature calculation.
-    def get_temperature_update_energy(self, e_in, t_in, y):
-        pv_func = self.get_mixture_specific_heat_cv_mass
-        he_func = self.get_mixture_internal_energy_mass
-        return (e_in - he_func(t_in, y)) / pv_func(t_in, y)
-
-    # This hard-codes the number of Newton iterations because the convergence
-    # check is not compatible with lazy evaluation. Instead, we plan to check
-    # the temperature residual at simulation health checking time.
-    # FIXME: Occasional convergence check is other-than-ideal; revisit asap.
-    # - could adapt dt or num_iter on temperature convergence?
-    # - can pass-in num_iter?
-    def get_temperature(self, energy, temperature_guess, species_mass_fractions):
-        """Compute the temperature of the mixture from thermal energy.
-
-        Parameters
-        ----------
-        energy: :class:`~meshmode.dof_array.DOFArray`
-            The internal (thermal) energy of the mixture.
-        temperature_guess: :class:`~meshmode.dof_array.DOFArray`
-            An initial starting temperature for the Newton iterations.
-        species_mass_fractions: numpy.ndarray
-            An object array of :class:`~meshmode.dof_array.DOFArray` with the
-            mass fractions of the mixture species.
-
-        Returns
-        -------
-        :class:`~meshmode.dof_array.DOFArray`
-            The mixture temperature after a fixed number of Newton iterations.
-        """
-        temperature_niter = 5
-        num_iter = temperature_niter
-        t_i = temperature_guess
-        for _ in range(num_iter):
-            t_i = t_i + self.get_temperature_update_energy(
-                energy, t_i, species_mass_fractions
-            )
-        return t_i
-
-
 class SparkSource:
-    r"""Energy deposition from a ignition source"
+    r"""Deposit energy from an ignition source."
 
-    Internal energy is deposited as a gaussian  of the form:
+    Internal energy is deposited as a gaussian of the form:
 
     .. math::
 
@@ -170,9 +111,10 @@ class SparkSource:
     .. automethod:: __init__
     .. automethod:: __call__
     """
+
     def __init__(self, *, dim, center=None, width=1.0,
                  amplitude=0., amplitude_func=None):
-        r"""Initialize the sponge parameters.
+        r"""Initialize the spark parameters.
 
         Parameters
         ----------
@@ -183,7 +125,6 @@ class SparkSource:
         amplitude_fun: function
             variation of amplitude with time
         """
-
         if center is None:
             center = np.zeros(shape=(dim,))
         self._center = center
@@ -201,14 +142,13 @@ class SparkSource:
 
         Parameters
         ----------
-        cv: :class:`mirgecom.gas_model.FluidState`
-            Fluid state object with the conserved and thermal state.
+        cv: :class:`mirgecom.fluid.ConservedVars`
+            Fluid conserved quantities
         time: float
             Current time at which the solution is desired
         x_vec: numpy.ndarray
             Nodal coordinates
         """
-
         t = time
         if self._amplitude_func is not None:
             amplitude = self._amplitude*self._amplitude_func(t)
@@ -237,25 +177,13 @@ class SparkSource:
                               momentum=momentum, species_mass=species_mass)
 
 
-def sponge_source(cv, cv_ref, sigma):
-    return sigma*(cv_ref - cv)
-
-
 class InitSponge:
-    r"""Solution initializer for flow in the ACT-II facility
-
-    This initializer creates a physics-consistent flow solution
-    given the top and bottom geometry profiles and an EOS using isentropic
-    flow relations.
-
-    The flow is initialized from the inlet stagnations pressure, P0, and
-    stagnation temperature T0.
-
-    geometry locations are linearly interpolated between given data points
+    r"""Initialize sponge.
 
     .. automethod:: __init__
     .. automethod:: __call__
     """
+
     def __init__(self, *, x0, thickness, amplitude):
         r"""Initialize the sponge parameters.
 
@@ -268,7 +196,6 @@ class InitSponge:
         amplitude: float
             sponge strength modifier
         """
-
         self._x0 = x0
         self._thickness = thickness
         self._amplitude = amplitude
@@ -304,6 +231,7 @@ def main(ctx_factory=cl.create_some_context,
          use_overintegration=False, actx_class=False, casename=None,
          lazy=False):
 
+    """Drive the isolator case."""
     if actx_class is None:
         raise RuntimeError("Array context class missing.")
 
@@ -348,6 +276,7 @@ def main(ctx_factory=cl.create_some_context,
         log_dir = os.path.dirname(logname)
         if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir)
+    comm.Barrier()
 
     logmgr = initialize_logmgr(use_logmgr,
         filename=logname, mode="wo", mpi_comm=comm)
@@ -382,6 +311,7 @@ def main(ctx_factory=cl.create_some_context,
     current_step = 0
     current_cfl = 1.0
     constant_cfl = False
+    force_eval = True
 
     # default health status bounds
     health_pres_min = 1.0e-1
@@ -403,9 +333,18 @@ def main(ctx_factory=cl.create_some_context,
     spec_diff = 1e-4
     mu_override = False  # optionally read in from input
     nspecies = 0
+    pyro_temp_iter = 3  # for pyrometheus, number of newton iterations
+    pyro_temp_tol = 1.e-4  # for pyrometheus, toleranace for temperature residual
+
+    # rhs control
+    use_ignition = False
+    use_sponge = True
+    use_av = True
+    use_combustion = True
+
+    sponge_sigma = 1.0
 
     # initialize the ignition spark
-    ignition = False
     spark_center = np.zeros(shape=(dim,))
     spark_center[0] = 0.677
     spark_center[1] = -0.021
@@ -413,7 +352,7 @@ def main(ctx_factory=cl.create_some_context,
         spark_center[2] = 0.035/2.
     spark_diameter = 0.0025
 
-    spark_strength = 40000000./current_dt
+    spark_strength = 30000000./current_dt
     #spark_strength = 5e-3
 
     spark_init_time = 999999999.
@@ -476,6 +415,14 @@ def main(ctx_factory=cl.create_some_context,
         except KeyError:
             pass
         try:
+            pyro_temp_iter = int(input_data["pyro_temp_iter"])
+        except KeyError:
+            pass
+        try:
+            pyro_temp_tol = float(input_data["pyro_temp_tol"])
+        except KeyError:
+            pass
+        try:
             order = int(input_data["order"])
         except KeyError:
             pass
@@ -512,19 +459,39 @@ def main(ctx_factory=cl.create_some_context,
         except KeyError:
             pass
         try:
-            ignition = bool(input_data["ignition"])
+            use_ignition = bool(input_data["use_ignition"])
         except KeyError:
             pass
         try:
             spark_init_time = float(input_data["ignition_init_time"])
         except KeyError:
             pass
+        try:
+            use_sponge = bool(input_data["use_sponge"])
+        except KeyError:
+            pass
+        try:
+            sponge_sigma = float(input_data["sponge_sigma"])
+        except KeyError:
+            pass
+        try:
+            use_av = bool(input_data["use_av"])
+        except KeyError:
+            pass
+        try:
+            use_combustion = bool(input_data["use_combustion"])
+        except KeyError:
+            pass
 
     # param sanity check
-    allowed_integrators = ["rk4", "euler", "lsrk54", "lsrk144"]
+    allowed_integrators = ["rk4", "euler", "lsrk54", "lsrk144", "compiled_lsrk54"]
     if integrator not in allowed_integrators:
         error_message = "Invalid time integrator: {}".format(integrator)
         raise RuntimeError(error_message)
+
+    if integrator == "compiled_lsrk54":
+        print("Setting force_eval = False for pre-compiled time integration")
+        force_eval = False
 
     s0_sc = np.log10(1.0e-4 / np.power(order, 4))
     if rank == 0:
@@ -544,7 +511,7 @@ def main(ctx_factory=cl.create_some_context,
         print(f"\tTime integration {integrator}")
         print("#### Simluation control data: ####\n")
 
-    if rank == 0 and ignition:
+    if rank == 0 and use_ignition:
         print("\n#### Ignition control parameters ####")
         print(f"spark center ({spark_center[0]},{spark_center[1]})")
         print(f"spark FWHM {spark_diameter}")
@@ -553,6 +520,9 @@ def main(ctx_factory=cl.create_some_context,
         print(f"ignition duration {spark_duration}")
         print("#### Ignition control parameters ####\n")
 
+    def _compiled_stepper_wrapper(state, t, dt, rhs):
+        return compiled_lsrk45_step(actx, state, t, dt, rhs)
+
     timestepper = rk4_step
     if integrator == "euler":
         timestepper = euler_step
@@ -560,6 +530,8 @@ def main(ctx_factory=cl.create_some_context,
         timestepper = lsrk54_step
     if integrator == "lsrk144":
         timestepper = lsrk144_step
+    if integrator == "compiled_lsrk54":
+        timestepper = _compiled_stepper_wrapper
 
     # }}}
     # working gas: O2/N2 #
@@ -588,6 +560,10 @@ def main(ctx_factory=cl.create_some_context,
     kappa = cp*mu/Pr
     init_temperature = 300.0
 
+    # Turn off combustion unless EOS supports it
+    if nspecies < 3:
+        use_combustion = False
+
     if rank == 0:
         print("\n#### Simluation material properties: ####")
         print(f"\tmu = {mu}")
@@ -612,9 +588,10 @@ def main(ctx_factory=cl.create_some_context,
         eos = IdealSingleGas(gamma=gamma, gas_const=r)
         species_names = ["air", "fuel"]
     else:
-        #from mirgecom.thermochemistry import make_pyrometheus_mechanism_class
-        #pyro_mech = make_pyrometheus_mechanism_class(cantera_soln)(actx.np)
-        pyro_mech = PyroWrapper(actx.np)
+        from mirgecom.thermochemistry import get_pyrometheus_wrapper_class
+        from uiuc import Thermochemistry
+        pyro_mech = get_pyrometheus_wrapper_class(
+            pyro_class=Thermochemistry, temperature_niter=pyro_temp_iter)(actx.np)
         eos = PyrometheusMixture(pyro_mech, temperature_guess=init_temperature)
         species_names = pyro_mech.species_names
 
@@ -689,6 +666,8 @@ def main(ctx_factory=cl.create_some_context,
 
     if logmgr:
         logmgr_add_cl_device_info(logmgr, queue)
+        logmgr_add_device_name(logmgr, queue)
+        logmgr_add_device_memory_usage(logmgr, queue)
 
         logmgr.add_watches([
             ("step.max", "step = {value}, "),
@@ -698,7 +677,14 @@ def main(ctx_factory=cl.create_some_context,
         ])
 
         try:
-            logmgr.add_watches(["memory_usage.max"])
+            #logmgr.add_watches(["memory_usage_python.max"])
+            logmgr.add_watches(["memory_usage_python.max",
+                                "memory: {value:6g} MByte"])
+        except KeyError:
+            pass
+
+        try:
+            logmgr.add_watches(["memory_usage_gpu.max"])
         except KeyError:
             pass
 
@@ -716,6 +702,14 @@ def main(ctx_factory=cl.create_some_context,
                                 temperature_seed=temperature_seed)
 
     create_fluid_state = actx.compile(get_fluid_state)
+
+    def get_temperature_update(cv, temperature):
+        y = cv.species_mass_fractions
+        e = gas_model.eos.internal_energy(cv)/cv.mass
+        return actx.np.abs(
+            pyro_mech.get_temperature_update_energy(e, temperature, y))
+
+    get_temperature_update_compiled = actx.compile(get_temperature_update)
 
     if restart_filename:
         if rank == 0:
@@ -789,32 +783,49 @@ def main(ctx_factory=cl.create_some_context,
 
     # initialize the sponge field
     sponge_thickness = 0.09
-    sponge_amp = 1.0/current_dt/1000
+    sponge_amp = sponge_sigma/current_dt/1000
     sponge_x0 = 0.9
 
     sponge_init = InitSponge(x0=sponge_x0, thickness=sponge_thickness,
                              amplitude=sponge_amp)
     x_vec = thaw(discr.nodes(), actx)
-    sponge_sigma = sponge_init(x_vec=x_vec)
 
-    # set the boundary conditions
-    def _ref_state_func(discr, btag, gas_model, ref_state, **kwargs):
-        from mirgecom.gas_model import project_fluid_state
-        from grudge.dof_desc import DOFDesc, as_dofdesc
-        dd_base_vol = DOFDesc("vol")
-        return project_fluid_state(discr, dd_base_vol,
-                                   as_dofdesc(btag).with_discr_tag(quadrature_tag),
-                                   ref_state, gas_model)
+    def _sponge_sigma(x_vec):
+        return sponge_init(x_vec=x_vec)
 
-    _ref_boundary_state_func = partial(_ref_state_func, ref_state=target_state)
+    get_sponge_sigma = actx.compile(_sponge_sigma)
+    sponge_sigma = get_sponge_sigma(x_vec)
 
-    ref_state = PrescribedFluidBoundary(boundary_state_func=_ref_boundary_state_func)
+    def _sponge_source(cv):
+        """Create sponge source."""
+        return sponge_sigma*(current_state.cv - cv)
+
+    from mirgecom.gas_model import project_fluid_state
+    from grudge.dof_desc import DOFDesc, as_dofdesc
+    dd_base_vol = DOFDesc("vol")
+
+    def get_target_state_on_boundary(btag):
+        return project_fluid_state(
+            discr, dd_base_vol,
+            as_dofdesc(btag).with_discr_tag(quadrature_tag),
+            target_state, gas_model
+        )
+
+    flow_ref_state = \
+        get_target_state_on_boundary(DTAG_BOUNDARY("flow"))
+
+    flow_ref_state = thaw(freeze(flow_ref_state, actx), actx)
+
+    def _target_flow_state_func(**kwargs):
+        return flow_ref_state
+
+    flow_boundary = PrescribedFluidBoundary(
+        boundary_state_func=_target_flow_state_func)
+
     wall = IsothermalWallBoundary()
 
     boundaries = {
-        DTAG_BOUNDARY("inflow"): ref_state,
-        DTAG_BOUNDARY("outflow"): ref_state,
-        DTAG_BOUNDARY("injection"): ref_state,
+        DTAG_BOUNDARY("flow"): flow_boundary,
         DTAG_BOUNDARY("wall"): wall
     }
     #from mirgecom.simutil import boundary_report
@@ -833,6 +844,9 @@ def main(ctx_factory=cl.create_some_context,
     if rank == 0:
         logger.info(init_message)
 
+    from grudge.dt_utils import characteristic_lengthscales
+    length_scales = characteristic_lengthscales(actx, discr)
+
     # some utility functions
     def vol_min_loc(x):
         from grudge.op import nodal_min_loc
@@ -850,14 +864,18 @@ def main(ctx_factory=cl.create_some_context,
         from grudge.op import nodal_max
         return actx.to_numpy(nodal_max(discr, "vol", x))[()]
 
+    def global_range_check(array, min_val, max_val):
+        return global_reduce(
+            check_range_local(discr, "vol", array, min_val, max_val), op="lor")
+
     def my_write_status(cv, dv, dt, cfl):
         status_msg = f"-------- dt = {dt:1.3e}, cfl = {cfl:1.4f}"
-        temperature = thaw(freeze(dv.temperature, actx), actx)
-        pressure = thaw(freeze(dv.pressure, actx), actx)
-        p_min = vol_min(pressure)
-        p_max = vol_max(pressure)
-        t_min = vol_min(temperature)
-        t_max = vol_max(temperature)
+        #temperature = thaw(freeze(dv.temperature, actx), actx)
+        #pressure = thaw(freeze(dv.pressure, actx), actx)
+        p_min = vol_min(dv.pressure)
+        p_max = vol_max(dv.pressure)
+        t_min = vol_min(dv.temperature)
+        t_max = vol_max(dv.temperature)
 
         from pytools.obj_array import obj_array_vectorize
         y_min = obj_array_vectorize(lambda x: vol_min(x),
@@ -869,6 +887,19 @@ def main(ctx_factory=cl.create_some_context,
             f"\n-------- P (min, max) (Pa) = ({p_min:1.9e}, {p_max:1.9e})")
         dv_status_msg += (
             f"\n-------- T (min, max) (K)  = ({t_min:7g}, {t_max:7g})")
+
+        if nspecies > 2:
+            # check the temperature convergence
+            # a single call to get_temperature_update is like taking an additional
+            # Newton iteration and gives us a residual
+            temp_resid = get_temperature_update_compiled(
+                cv, dv.temperature)/dv.temperature
+            temp_err_min = vol_min(temp_resid)
+            temp_err_max = vol_max(temp_resid)
+            dv_status_msg += (
+                f"\n-------- T_resid (min, max) = "
+                f"({temp_err_min:1.5e}, {temp_err_max:1.5e})")
+
         for i in range(nspecies):
             dv_status_msg += (
                 f"\n-------- y_{species_names[i]} (min, max) = "
@@ -879,7 +910,11 @@ def main(ctx_factory=cl.create_some_context,
         if rank == 0:
             logger.info(status_msg)
 
-    def my_write_viz(step, t, cv, dv, ts_field, alpha_field):
+    def my_write_viz(step, t, fluid_state, ts_field, alpha_field):
+
+        cv = fluid_state.cv
+        dv = fluid_state.dv
+
         tagged_cells = smoothness_indicator(discr, cv.mass, s0=s0_sc,
                                             kappa=kappa_sc)
 
@@ -889,6 +924,7 @@ def main(ctx_factory=cl.create_some_context,
         viz_fields = [("cv", cv),
                       ("dv", dv),
                       ("mach", mach),
+                      ("rank", rank),
                       ("velocity", cv.velocity),
                       ("sponge_sigma", sponge_sigma),
                       ("alpha", alpha_field),
@@ -898,6 +934,29 @@ def main(ctx_factory=cl.create_some_context,
         viz_fields.extend(
             ("Y_"+species_names[i], cv.species_mass_fractions[i])
             for i in range(nspecies))
+
+        if nspecies > 2:
+            temp_resid = get_temperature_update_compiled(
+                cv, dv.temperature)/dv.temperature
+            viz_ext = [("temp_resid", temp_resid)]
+            viz_fields.extend(viz_ext)
+
+        # additional viz quantities, add in some non-dimensional numbers
+        if 1:
+            cell_Re = cv.mass*cv.speed*length_scales/fluid_state.viscosity
+            cp = gas_model.eos.heat_capacity_cp(cv, fluid_state.temperature)
+            alpha_heat = fluid_state.thermal_conductivity/cp/fluid_state.viscosity
+            cell_Pe_heat = length_scales*cv.speed/alpha_heat
+            from mirgecom.viscous import get_local_max_species_diffusivity
+            d_alpha_max = \
+                get_local_max_species_diffusivity(fluid_state.array_context,
+                                                  fluid_state.species_diffusivity)
+            cell_Pe_mass = length_scales*cv.speed/d_alpha_max
+            viz_ext = [("Re", cell_Re),
+                       ("Pe_mass", cell_Pe_mass),
+                       ("Pe_heat", cell_Pe_heat)]
+            viz_fields.extend(viz_ext)
+
         write_visfile(discr, viz_fields, visualizer, vizname=vizname,
                       step=step, t=t, overwrite=True)
 
@@ -917,15 +976,16 @@ def main(ctx_factory=cl.create_some_context,
             }
             write_restart_file(actx, restart_data, restart_fname, comm)
 
-    def my_health_check(cv, dv):
+    def my_health_check(fluid_state):
         health_error = False
+        cv = fluid_state.cv
+        dv = fluid_state.dv
+
         if check_naninf_local(discr, "vol", dv.pressure):
             health_error = True
             logger.info(f"{rank=}: NANs/Infs in pressure data.")
 
-        if global_reduce(check_range_local(discr, "vol", dv.pressure,
-                                     health_pres_min, health_pres_max),
-                                     op="lor"):
+        if global_range_check(dv.pressure, health_pres_min, health_pres_max):
             health_error = True
             p_min = vol_min(dv.pressure)
             p_max = vol_max(dv.pressure)
@@ -933,9 +993,7 @@ def main(ctx_factory=cl.create_some_context,
                         f"Simulation Range ({p_min=}, {p_max=}) "
                         f"Specified Limits ({health_pres_min=}, {health_pres_max=})")
 
-        if global_reduce(check_range_local(discr, "vol", dv.temperature,
-                                     health_temp_min, health_temp_max),
-                                     op="lor"):
+        if global_range_check(dv.temperature, health_temp_min, health_temp_max):
             health_error = True
             t_min = vol_min(dv.temperature)
             t_max = vol_max(dv.temperature)
@@ -944,15 +1002,26 @@ def main(ctx_factory=cl.create_some_context,
                         f"Specified Limits ({health_temp_min=}, {health_temp_max=})")
 
         for i in range(nspecies):
-            if global_reduce(check_range_local(discr, "vol",
-                                               cv.species_mass_fractions[i],
-                                         health_mass_frac_min, health_mass_frac_max),
-                                         op="lor"):
+            if global_range_check(cv.species_mass_fractions[i],
+                                  health_mass_frac_min, health_mass_frac_max):
                 health_error = True
                 y_min = vol_min(cv.species_mass_fractions[i])
                 y_max = vol_max(cv.species_mass_fractions[i])
                 logger.info(f"Species mass fraction range violation. "
                             f"{species_names[i]}: ({y_min=}, {y_max=})")
+
+        if nspecies > 2:
+            # check the temperature convergence
+            # a single call to get_temperature_update is like taking an additional
+            # Newton iteration and gives us a residual
+            temp_resid = get_temperature_update_compiled(
+                cv, dv.temperature)/dv.temperature
+            temp_err = vol_max(temp_resid)
+            if temp_err > pyro_temp_tol:
+                health_error = True
+                #error = thaw(freeze(temp_err, actx), actx)
+                logger.info(f"Temperature is not converged "
+                            f"{temp_err=} > {pyro_temp_tol}.")
 
         return health_error
 
@@ -973,9 +1042,6 @@ def main(ctx_factory=cl.create_some_context,
         :class:`~meshmode.dof_array.DOFArray`
             The maximum stable timestep at each node.
         """
-        from grudge.dt_utils import characteristic_lengthscales
-
-        length_scales = characteristic_lengthscales(state.array_context, discr)
 
         nu = 0
         d_alpha_max = 0
@@ -1031,42 +1097,41 @@ def main(ctx_factory=cl.create_some_context,
 
         return ts_field, cfl, min(t_remaining, dt)
 
-    def my_get_alpha(discr, state, alpha):
-        """ Scale alpha by the element characteristic length """
-        from grudge.dt_utils import characteristic_lengthscales
-        array_context = state.array_context
-        length_scales = characteristic_lengthscales(array_context, discr)
+    def my_get_alpha(state, alpha):
+        """Scale alpha by the element characteristic length and velocity"""
+        return alpha*state.speed*length_scales
 
-        #from mirgecom.fluid import compute_wavespeed
-        #wavespeed = compute_wavespeed(eos, state)
+    def get_sc_scale():
+        return alpha_sc * length_scales
 
-        vmag = array_context.np.sqrt(np.dot(state.velocity, state.velocity))
-        #alpha_field = alpha*wavespeed*length_scales
-        alpha_field = alpha*vmag*length_scales
-        #alpha_field = wavespeed*0 + alpha*current_step
-        #alpha_field = state.mass
+    get_sc_scale_compiled = actx.compile(get_sc_scale)
 
-        return alpha_field
+    sc_scale = get_sc_scale_compiled()
 
     def my_pre_step(step, t, dt, state):
-        cv, tseed = state
-        fluid_state = create_fluid_state(cv=cv, temperature_seed=tseed)
-        dv = fluid_state.dv
 
         try:
             if logmgr:
                 logmgr.tick_before()
-
-            alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-            ts_field, cfl, dt = my_get_timestep(t, dt, fluid_state, alpha_field)
 
             do_viz = check_step(step=step, interval=nviz)
             do_restart = check_step(step=step, interval=nrestart)
             do_health = check_step(step=step, interval=nhealth)
             do_status = check_step(step=step, interval=nstatus)
 
+            if any([do_viz, do_restart, do_health, do_status]):
+                cv, tseed = state
+                fluid_state = create_fluid_state(cv=cv, temperature_seed=tseed)
+                # if the time integrator didn't force_eval, do so now
+                if not force_eval:
+                    fluid_state = force_evaluation(actx, fluid_state)
+                dv = fluid_state.dv
+
+                alpha_field = my_get_alpha(fluid_state, alpha_sc)
+                ts_field, cfl, dt = my_get_timestep(t, dt, fluid_state, alpha_field)
+
             if do_health:
-                health_errors = global_reduce(my_health_check(cv, dv), op="lor")
+                health_errors = global_reduce(my_health_check(fluid_state), op="lor")
                 if health_errors:
                     if rank == 0:
                         logger.warning("Fluid solution failed health check.")
@@ -1079,13 +1144,13 @@ def main(ctx_factory=cl.create_some_context,
                 my_write_restart(step=step, t=t, cv=cv, temperature_seed=tseed)
 
             if do_viz:
-                my_write_viz(step=step, t=t, cv=cv, dv=dv,
+                my_write_viz(step=step, t=t, fluid_state=fluid_state,
                              ts_field=ts_field, alpha_field=alpha_field)
 
         except MyRuntimeError:
             if rank == 0:
                 logger.error("Errors detected; attempting graceful exit.")
-            my_write_viz(step=step, t=t, cv=cv, dv=dv, ts_field=ts_field,
+            my_write_viz(step=step, t=t, fluid_state=fluid_state, ts_field=ts_field,
                          alpha_field=alpha_field)
             my_write_restart(step=step, t=t, cv=cv, temperature_seed=tseed)
             raise
@@ -1093,84 +1158,65 @@ def main(ctx_factory=cl.create_some_context,
         return state, dt
 
     def my_post_step(step, t, dt, state):
-        cv, tseed = state
-        fluid_state = create_fluid_state(cv=cv, temperature_seed=tseed)
-        # Logmgr needs to know about EOS, dt, dim?
-        # imo this is a design/scope flaw
         if logmgr:
             set_dt(logmgr, dt)
-            set_sim_state(logmgr, dim, cv, gas_model.eos)
             logmgr.tick_after()
-        return make_obj_array([fluid_state.cv, fluid_state.temperature]), dt
+        return state, dt
 
-    def my_rhs_without_combustion(t, state):
+    from mirgecom.gas_model import make_operator_fluid_states
+    from mirgecom.navierstokes import grad_cv_operator
+
+    def my_rhs(t, state):
         cv, tseed = state
         fluid_state = make_fluid_state(cv=cv, gas_model=gas_model,
                                        temperature_seed=tseed)
-        alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-        cv_rhs = (
-            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + av_laplacian_operator(discr, fluid_state=fluid_state,
-                                    boundaries=boundaries,
-                                    boundary_kwargs={"time": t,
-                                                     "gas_model": gas_model},
-                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
-                                    quadrature_tag=quadrature_tag)
-            + sponge_source(cv=fluid_state.cv, cv_ref=target_cv, sigma=sponge_sigma)
-        )
-        return make_obj_array([cv_rhs, 0*tseed])
+        # Temperature seed RHS (keep tseed updated)
+        tseed_rhs = fluid_state.temperature - tseed
 
-    def my_rhs_with_combustion(t, state):
-        cv, tseed = state
-        fluid_state = make_fluid_state(cv=cv, gas_model=gas_model,
-                                       temperature_seed=tseed)
-        alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-        cv_rhs = (
-            ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + eos.get_species_source_terms(cv,
-                                           temperature=fluid_state.temperature)
-            + av_laplacian_operator(discr, fluid_state=fluid_state,
-                                    boundaries=boundaries,
-                                    boundary_kwargs={"time": t,
-                                                     "gas_model": gas_model},
-                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
-                                    quadrature_tag=quadrature_tag)
-            + sponge_source(cv=cv, cv_ref=restart_cv, sigma=sponge_sigma)
-        )
-        return make_obj_array([cv_rhs, 0*tseed])
+        # Steps common to NS and AV (and wall model needs grad(temperature))
+        operator_fluid_states = make_operator_fluid_states(
+            discr, fluid_state, gas_model, boundaries, quadrature_tag)
 
-    def my_rhs_with_ignition(t, state):
-        cv, tseed = state
-        fluid_state = make_fluid_state(cv=cv, gas_model=gas_model,
-                                       temperature_seed=tseed)
-        alpha_field = my_get_alpha(discr, fluid_state, alpha_sc)
-        cv_rhs = (
+        grad_fluid_cv = grad_cv_operator(
+            discr, gas_model, boundaries, fluid_state,
+            quadrature_tag=quadrature_tag,
+            operator_states_quad=operator_fluid_states)
+
+        # Fluid CV RHS contributions
+        ns_rhs = \
             ns_operator(discr, state=fluid_state, time=t, boundaries=boundaries,
-                        gas_model=gas_model, quadrature_tag=quadrature_tag)
-            + eos.get_species_source_terms(cv,
-                                           temperature=fluid_state.temperature)
-            + av_laplacian_operator(discr, fluid_state=fluid_state,
-                                    boundaries=boundaries,
-                                    boundary_kwargs={"time": t,
-                                                     "gas_model": gas_model},
-                                    alpha=alpha_field, s0=s0_sc, kappa=kappa_sc,
-                                    quadrature_tag=quadrature_tag)
-            + ignition_source(x_vec=x_vec, cv=cv, time=t)
-            + sponge_source(cv=cv, cv_ref=restart_cv, sigma=sponge_sigma)
-        )
-        return make_obj_array([cv_rhs, 0*tseed])
+                gas_model=gas_model, quadrature_tag=quadrature_tag,
+                operator_states_quad=operator_fluid_states,
+                grad_cv=grad_fluid_cv)
+
+        chem_rhs = 0*cv
+        if use_combustion:  # conditionals evaluated only once at compile time
+            chem_rhs =  \
+                eos.get_species_source_terms(cv, temperature=fluid_state.temperature)
+
+        av_rhs = 0*cv
+        if use_av:
+            alpha_field = sc_scale * fluid_state.speed
+            av_rhs = \
+                av_laplacian_operator(discr, fluid_state=fluid_state,
+                    boundaries=boundaries, gas_model=gas_model,
+                    time=t, alpha=alpha_field, s0=s0_sc,
+                    kappa=kappa_sc, quadrature_tag=quadrature_tag,
+                    operator_states_quad=operator_fluid_states)
+
+        sponge_rhs = 0*cv
+        if use_sponge:
+            sponge_rhs = _sponge_source(cv=cv)
+
+        ignition_rhs = 0*cv
+        if use_ignition:
+            ignition_rhs = ignition_source(x_vec=x_vec, cv=cv, time=t)
+
+        cv_rhs = ns_rhs + chem_rhs + av_rhs + sponge_rhs + ignition_rhs
+        return make_obj_array([cv_rhs, tseed_rhs])
 
     current_dt = get_sim_timestep(discr, current_state, current_t, current_dt,
                                   current_cfl, t_final, constant_cfl)
-
-    my_rhs = my_rhs_without_combustion
-    if nspecies > 2:
-        if ignition:
-            my_rhs = my_rhs_with_ignition
-        else:
-            my_rhs = my_rhs_with_combustion
 
     current_step, current_t, stepper_state = \
         advance_state(rhs=my_rhs, timestepper=timestepper,
@@ -1178,20 +1224,21 @@ def main(ctx_factory=cl.create_some_context,
                       post_step_callback=my_post_step,
                       istep=current_step, dt=current_dt,
                       t=current_t, t_final=t_final,
+                      force_eval=force_eval,
                       state=make_obj_array([current_state.cv, temperature_seed]))
     current_cv, tseed = stepper_state
-    current_state = make_fluid_state(current_cv, gas_model, tseed)
+    current_state = create_fluid_state(current_cv, tseed)
 
     # Dump the final data
     if rank == 0:
         logger.info("Checkpointing final state ...")
     final_dv = current_state.dv
-    alpha_field = my_get_alpha(discr, current_state, alpha_sc)
+    alpha_field = my_get_alpha(current_state, alpha_sc)
     ts_field, cfl, dt = my_get_timestep(t=current_t, dt=current_dt,
                                         state=current_state, alpha=alpha_field)
     my_write_status(dt=dt, cfl=cfl, cv=current_state.cv, dv=final_dv)
 
-    my_write_viz(step=current_step, t=current_t, cv=current_state.cv, dv=final_dv,
+    my_write_viz(step=current_step, t=current_t, fluid_state=current_state,
                  ts_field=ts_field, alpha_field=alpha_field)
     my_write_restart(step=current_step, t=current_t, cv=current_state.cv,
                      temperature_seed=tseed)

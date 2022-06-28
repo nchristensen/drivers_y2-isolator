@@ -30,11 +30,24 @@ Else
     injector_factor=10.0;
 EndIf
 
+If(Exists(shearfac))
+    shear_factor=shearfac;
+Else
+    shear_factor=1.0;
+EndIf
+
+If(Exists(cavityfac))
+    cavity_factor=cavityfac;
+Else
+    cavity_factor=1.0;
+EndIf
+
 bigsize = basesize*4;     // the biggest mesh size 
 inletsize = basesize*2;   // background mesh size upstream of the nozzle
 isosize = basesize;       // background mesh size in the isolator
 nozzlesize = basesize/2;       // background mesh size in the isolator
-cavitysize = basesize/2.; // background mesh size in the cavity region
+cavitysize = basesize/cavity_factor; // background mesh size in the cavity region
+shearsize = cavitysize/shear_factor;
 
 inj_h=4.e-3;  // height of injector (bottom) from floor
 inj_t=1.59e-3; // diameter of injector
@@ -46,6 +59,7 @@ Printf("inletsize = %f", inletsize);
 Printf("isosize = %f", isosize);
 Printf("nozzlesize = %f", nozzlesize);
 Printf("cavitysize = %f", cavitysize);
+Printf("shearsize = %f", shearsize);
 Printf("injectorsize = %f", injectorsize);
 Printf("boundratio = %f", boundratio);
 Printf("boundratiocavity = %f", boundratiocavity);
@@ -577,53 +591,57 @@ surface_vector_full[] = Abs(Boundary{Volume{union[0]};});
     //Printf("surface_vector_full: %g",surface_vector_full[i]);
 //EndFor
 
-//surface_vector_full[0], // isolator bottom
-//surface_vector_full[1], // nozzle bottom
-//surface_vector_full[2], // front of cavity?
-//surface_vector_full[3], // isolator back
-//surface_vector_full[4], // isolator front
-//surface_vector_full[5], // inlet
-//surface_vector_full[6], // cavity bottom
-//surface_vector_full[7], // cavity slant
-//surface_vector_full[8], // post cavity flat extension
-//surface_vector_full[9], // expansion bottom
-//surface_vector_full[10], // outlet
-//surface_vector_full[11], // isolator top
-//surface_vector_full[12], // nozzle top
+//surface_vector_full[1], // nozzle top
+//surface_vector_full[2], // nozzle bottom
+//surface_vector_full[3], // isolator back (aft)
+//surface_vector_full[4], // isolator front (fore)
+//surface_vector_full[5], // isolator top
+//surface_vector_full[6], // isolator bottom
+//surface_vector_full[7], // cavity front
+//surface_vector_full[8], // cavity bottom
+//surface_vector_full[9], // cavity slant
+//surface_vector_full[10], // post cavity flat
+//surface_vector_full[11], // expansion bottom
+//surface_vector_full[12], // outlet
 //surface_vector_full[13], // injector wall
 //surface_vector_full[14], // injector inlet
 
 //Physical Volume("fluid_domain") = surface_vector[1];
 Physical Volume("fluid_domain") = union[0];
-Physical Surface("inflow") = surface_vector_full[5]; // inlet
-Physical Surface("outflow") = surface_vector_full[10]; // outlet
+Physical Surface("inflow") = 1; // inlet
+Physical Surface("outflow") = surface_vector_full[12]; // outlet
 Physical Surface("injection") = surface_vector_full[14]; // injection
+Physical Surface("flow") = {
+    1,
+    surface_vector_full[12],
+    surface_vector_full[14]
+};
 Physical Surface('wall') = {
-surface_vector_full[0], // isolator bottom
-surface_vector_full[1], // nozzle bottom
-surface_vector_full[2], // front of cavity
-surface_vector_full[3], // isolator back
-surface_vector_full[4], // isolator front
-surface_vector_full[6], // cavity bottom
-surface_vector_full[7], // cavity slant
-surface_vector_full[8], // post cavity flat extension
-surface_vector_full[9], // expansion bottom
-surface_vector_full[11], // isolator top
-surface_vector_full[12], // nozzle top
+surface_vector_full[1], // nozzle top
+surface_vector_full[2], // nozzle bottom
+surface_vector_full[3], // isolator back (aft)
+surface_vector_full[4], // isolator front (fore)
+surface_vector_full[5], // isolator top
+surface_vector_full[6], // isolator bottom
+surface_vector_full[7], // cavity front
+surface_vector_full[8], // cavity bottom
+surface_vector_full[9], // cavity slant
+surface_vector_full[10], // post cavity flat
+surface_vector_full[11], // expansion bottom
 surface_vector_full[13] // injector wall
 };
 
 // Create distance field from surfaces for wall meshing, excludes cavity, injector
 Field[1] = Distance;
 Field[1].SurfacesList = {
-surface_vector_full[0], // isolator bottom
-surface_vector_full[1], // nozzle bottom
-surface_vector_full[3], // isolator back
-surface_vector_full[4], // isolator front
-surface_vector_full[8], // post cavity flat extension
-surface_vector_full[9], // expansion bottom
-surface_vector_full[11], // isolator top
-surface_vector_full[12] // nozzle top
+surface_vector_full[1], // nozzle top
+surface_vector_full[2], // nozzle bottom
+surface_vector_full[3], // isolator back (aft)
+surface_vector_full[4], // isolator front (fore)
+surface_vector_full[5], // isolator top
+surface_vector_full[6], // isolator bottom
+surface_vector_full[10], // post cavity flat
+surface_vector_full[11] // expansion bottom
 };
 Field[1].Sampling = 1000;
 //
@@ -639,9 +657,9 @@ Field[2].StopAtDistMax = 1;
 // Create distance field from curves, cavity only
 Field[11] = Distance;
 Field[11].SurfacesList = {
-surface_vector_full[2], // front of cavity
-surface_vector_full[6], // cavity bottom
-surface_vector_full[7] // cavity slant
+surface_vector_full[7], // cavity front
+surface_vector_full[8], // cavity bottom
+surface_vector_full[9] // cavity slant
 };
 Field[11].Sampling = 1000;
 
@@ -713,7 +731,8 @@ Field[6] = Box;
 Field[6].XMin = cavity_start;
 Field[6].XMax = cavity_end;
 Field[6].YMin = -1.0;
-Field[6].YMax = -0.003;
+//Field[6].YMax = -0.003;
+Field[6].YMax = 0.0;
 Field[6].ZMin = -1.0;
 Field[6].ZMax = 1.0;
 Field[6].Thickness = 0.10;    // interpolate from VIn to Vout over a distance around the box
@@ -723,7 +742,8 @@ Field[6].VOut = bigsize;
 // background mesh size in the injection region
 injector_start_x = 0.69;
 injector_end_x = 0.75;
-injector_start_y = -0.0225;
+//injector_start_y = -0.0225;
+injector_start_y = -0.021;
 injector_end_y = -0.026;
 injector_start_z = 0.0175 - 0.002;
 injector_end_z = 0.0175 + 0.002;
@@ -743,10 +763,28 @@ Field[7].Thickness = 0.10;    // interpolate from VIn to Vout over a distance ar
 Field[7].VIn = injectorsize;
 Field[7].VOut = bigsize;
 
+// background mesh size in the shear region
+shear_start_x = 0.65;
+shear_end_x = 0.73;
+shear_start_y = -0.004;
+shear_end_y = -0.01;
+shear_start_z = -1.0;
+shear_end_z = 1.0;
+Field[8] = Box;
+Field[8].XMin = shear_start_x;
+Field[8].XMax = shear_end_x;
+Field[8].YMin = shear_start_y;
+Field[8].YMax = shear_end_y;
+Field[8].ZMin = shear_start_z;
+Field[8].ZMax = shear_end_z;
+Field[8].Thickness = 0.10;  
+Field[8].VIn = shearsize;
+Field[8].VOut = bigsize;
+
 // take the minimum of all defined meshing fields
 Field[100] = Min;
 //Field[100].FieldsList = {2, 3, 4, 5, 6, 7, 12, 14};
-Field[100].FieldsList = {2, 3, 4, 5, 6, 7, 12, 14};
+Field[100].FieldsList = {2, 3, 4, 5, 6, 7, 8, 12, 14};
 //Field[100].FieldsList = {2};
 Background Field = 100;
 

@@ -1,1 +1,0 @@
-../pyro_mechs/uiuc.py
